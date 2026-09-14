@@ -39,3 +39,6 @@ Thumbs.db
 
 # Notebooks checkpoints
 .ipynb_checkpoints/
+
+# Markdown (kept locally, not tracked)
+*.md
