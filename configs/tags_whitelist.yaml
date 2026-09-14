@@ -1,0 +1,25 @@
+controllable_parameters:
+  - tag: PLACEHOLDER_AVT_TEMP
+    unit: C
+    description: "Example AVT temperature setpoint — replace from KIP dictionary"
+    current_source: avt_tags
+    range:
+      min: 300.0
+      max: 380.0
+      assumption: true
+    deltas: [-5.0, -2.0, 0.0, 2.0, 5.0]
+
+  - tag: PLACEHOLDER_HDT_TEMP
+    unit: C
+    description: "Example hydrotreating reactor temperature — replace from materials"
+    current_source: "242000_tags"
+    range:
+      min: 280.0
+      max: 360.0
+      assumption: true
+    deltas: [-3.0, 0.0, 3.0]
+
+state_tags:
+  avt: []
+  hydrotreating: []
+  blending: []

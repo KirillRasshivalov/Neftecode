@@ -1,0 +1,25 @@
+hard:
+  sulfur_mg_kg_max: 10.0
+  blend_shares_sum: 1.0
+  blend_shares_tolerance: 1.0e-3
+
+data_quality:
+  lims_max_age_minutes: 1440
+  pak_max_age_minutes: 360
+  require_quality_source: true
+
+quality_source_priority:
+  - lims
+  - pak
+  - virtual
+
+ranking_weights:
+  quality_risk: 100.0
+  throughput: 10.0
+  energy_or_cost_proxy: 5.0
+  equipment_risk: 20.0
+
+refuse_messages:
+  stale_lims: "Надёжной рекомендации нет: последнее лабораторное значение устарело."
+  no_feasible: "Надёжной рекомендации нет: доступные варианты нарушают ограничения или выходят за модельный диапазон."
+  incomplete_data: "Надёжной рекомендации нет: входные данные неполны или несогласованы."
