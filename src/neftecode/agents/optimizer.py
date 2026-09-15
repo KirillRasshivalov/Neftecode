@@ -10,6 +10,10 @@ from neftecode.domain.agent_results import ScoredScenario
 from neftecode.domain.state import ProcessState
 from neftecode.safety.constraints import HardConstraints
 
+#: Metrics where a larger value is better. The score is lower-is-better, so these
+#: are subtracted; everything else (risks, energy) is added.
+_BENEFIT_METRICS = frozenset({"throughput"})
+
 
 class OptimizerAgent:
     def __init__(
@@ -55,7 +59,11 @@ class OptimizerAgent:
             )
 
         feasible = [s for s in scored if s.feasible]
-        feasible.sort(key=lambda s: s.score if s.score is not None else float("inf"))
+        # Lower score is better. On a tie, holding the current regime wins: a change
+        # that buys nothing is not worth an operator action.
+        feasible.sort(
+            key=lambda s: (s.score if s.score is not None else float("inf"), not s.action.is_noop())
+        )
         return feasible
 
     def _generate_candidates(self, state: ProcessState) -> list[ControlAction]:
@@ -94,5 +102,6 @@ class OptimizerAgent:
     def _score(self, metrics: dict[str, float]) -> float:
         total = 0.0
         for key, weight in self.weights.items():
-            total += float(weight) * float(metrics.get(key, 0.0))
+            sign = -1.0 if key in _BENEFIT_METRICS else 1.0
+            total += sign * float(weight) * float(metrics.get(key, 0.0))
         return total
