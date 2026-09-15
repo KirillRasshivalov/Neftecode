@@ -9,7 +9,7 @@ from neftecode.agents.base import QualityAgent, ReliabilityAgent
 from neftecode.agents.optimizer import OptimizerAgent
 from neftecode.agents.quality import QualityAgentStub
 from neftecode.agents.reliability import ReliabilityAgentStub
-from neftecode.data.config import load_constraints, project_root
+from neftecode.data.config import load_constraints, load_tags_whitelist, project_root
 from neftecode.data.state_builder import ProcessStateBuilder
 from neftecode.domain.recommendation import OperatorRecommendation
 from neftecode.orchestration.explain import build_explanation
@@ -24,17 +24,23 @@ class Orchestrator:
         reliability_agent: ReliabilityAgent | None = None,
         state_builder: ProcessStateBuilder | None = None,
         artifacts_dir: Path | None = None,
+        whitelist: dict[str, Any] | None = None,
+        constraints_cfg: dict[str, Any] | None = None,
     ) -> None:
         self.quality_agent = quality_agent or QualityAgentStub()
         self.reliability_agent = reliability_agent or ReliabilityAgentStub()
         self.state_builder = state_builder or ProcessStateBuilder()
-        self.constraints_cfg = load_constraints()
+        # Both are injectable so a caller can run the cycle on real levers without
+        # editing the YAML. With no arguments the behaviour is unchanged.
+        self.constraints_cfg = constraints_cfg if constraints_cfg is not None else load_constraints()
+        self.whitelist = whitelist if whitelist is not None else load_tags_whitelist()
         self.gate = DataQualityGate(self.constraints_cfg)
-        self.hard = HardConstraints(self.constraints_cfg)
+        self.hard = HardConstraints(self.constraints_cfg, whitelist=self.whitelist)
         self.optimizer = OptimizerAgent(
             quality_agent=self.quality_agent,
             reliability_agent=self.reliability_agent,
             constraints=self.hard,
+            whitelist=self.whitelist,
             ranking_cfg=self.constraints_cfg,
         )
         self.artifacts_dir = artifacts_dir or (project_root() / "artifacts")
@@ -46,6 +52,11 @@ class Orchestrator:
 
         baseline_q = self.quality_agent.assess(state)
         baseline_r = self.reliability_agent.assess(state)
+
+        if state.data_flags.get("running") is False:
+            rec = self._refuse_not_running(timestamp, state, baseline_q, baseline_r)
+            self._persist(rec)
+            return rec
 
         if not gate.ok:
             msg = self.constraints_cfg.get("refuse_messages", {}).get(
@@ -120,6 +131,35 @@ class Orchestrator:
         )
         rec.explanation = build_explanation(state, best, refuse=False, refuse_reason=None)
         self._persist(rec)
+        return rec
+
+    def _refuse_not_running(
+        self,
+        timestamp: datetime,
+        state: Any,
+        baseline_q: Any,
+        baseline_r: Any,
+    ) -> OperatorRecommendation:
+        """The unit is shut down: no regime change is meaningful, whatever else the data say."""
+        msg = self.constraints_cfg.get("refuse_messages", {}).get(
+            "unit_not_running",
+            "Надёжной рекомендации нет: установка не работает — режимные изменения не рассматриваются.",
+        )
+        detail = state.data_flags.get("running_detail")
+        rec = OperatorRecommendation(
+            timestamp=timestamp,
+            refuse=True,
+            refuse_reason=f"{msg} Детали: {detail}" if detail else msg,
+            problem_or_risk="установка не работает",
+            constraints_checked=self.hard.checked_labels(),
+            confidence=0.0,
+            audit={
+                "state": state.model_dump(mode="json"),
+                "baseline_quality": baseline_q.model_dump(mode="json"),
+                "baseline_reliability": baseline_r.model_dump(mode="json"),
+            },
+        )
+        rec.explanation = build_explanation(state, None, refuse=True, refuse_reason=rec.refuse_reason)
         return rec
 
     @staticmethod
