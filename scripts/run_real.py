@@ -28,6 +28,7 @@ from neftecode.agents import QualityAgentBaseline, ReliabilityAgentBaseline
 from neftecode.data.config import load_constraints
 from neftecode.domain.recommendation import OperatorRecommendation
 from neftecode.domain.state import ProcessState, QualityReading, TagValue
+from neftecode.orchestration.explain import fmt
 from neftecode.orchestration.orchestrator import Orchestrator
 from scripts import realdata as rd
 from scripts.analysis.quality_baseline_fit import ewma_after, usable_labels
@@ -161,6 +162,17 @@ def _interval(quality: dict | None) -> dict:
     return ((quality or {}).get("details") or {}).get("intervals", {}).get("sulfur_mg_kg", {})
 
 
+def _moved(rec: OperatorRecommendation) -> dict[str, tuple[float, float]]:
+    current = rec.audit.get("state", {}).get("controllable", {})
+    if rec.proposed_action is None:
+        return {}
+    return {
+        tag: (current[tag], new)
+        for tag, new in rec.proposed_action.changes.items()
+        if tag in current and abs(new - current[tag]) > 1e-9
+    }
+
+
 def one_line(rec: OperatorRecommendation) -> str:
     state = rec.audit.get("state", {})
     flags = state.get("data_flags", {})
@@ -168,13 +180,12 @@ def one_line(rec: OperatorRecommendation) -> str:
     base = _interval(rec.audit.get("baseline_quality"))
     lab_text = f"ЛИМС {lab['value']:.1f} ({lab['age_minutes'] / 60:.0f} ч)" if lab else "ЛИМС —"
     p95 = f"p95 {base['p95']:.1f}" if base else "p95 —"
-    action = ""
-    if outcome(rec) == "RECOMMEND":
-        current = state.get("controllable", {})
-        moved = {t: v for t, v in rec.proposed_action.changes.items() if abs(v - current.get(t, v)) > 1e-9}
-        action = "  " + ", ".join(f"{t} {current[t]:.4g}→{v:.4g}" for t, v in moved.items())
     running = {True: "работает", False: "стоит", None: "?"}[flags.get("running")]
-    return f"{rec.timestamp:%Y-%m-%d %H:%M}  {outcome(rec):<9}  {lab_text:<18} {p95:<9} установка {running}{action}"
+    action = ", ".join(f"{tag} {fmt(old)}→{fmt(new)}" for tag, (old, new) in _moved(rec).items())
+    return (
+        f"{rec.timestamp:%Y-%m-%d %H:%M}  {outcome(rec):<9}  {lab_text:<18} {p95:<9} "
+        f"установка {running}  {action}"
+    ).rstrip()
 
 
 def full_card(rec: OperatorRecommendation) -> str:
@@ -183,41 +194,41 @@ def full_card(rec: OperatorRecommendation) -> str:
     current = state.get("controllable", {})
     lab = state.get("quality", {}).get("sulfur_mg_kg")
     pak = flags.get("pak_sulfur") or {}
+    decision = rec.audit.get("decision", {})
     base = _interval(rec.audit.get("baseline_quality"))
+
     lines = [f"═══ {rec.timestamp:%Y-%m-%d %H:%M} · {outcome(rec)} ═══"]
-    lines.append("1 Состояние   " + " · ".join(f"{t} {v:.5g}" for t, v in current.items()))
+    lines.append("1 Состояние   " + " · ".join(f"{tag} {fmt(v)}" for tag, v in current.items()))
     lab_text = f"ЛИМС {lab['value']:.1f} мг/кг ({lab['age_minutes'] / 60:.0f} ч назад)" if lab else "ЛИМС нет"
-    pak_text = (
-        f"ПАК {pak['value']:.1f} ppm, {'исправен' if pak.get('healthy') else 'неисправен/заморожен'}"
-        if pak else "ПАК нет"
-    )
-    ewma = flags.get("lab_sulfur_ewma")
-    lines.append(f"              {lab_text} · сглаженное {ewma if ewma is not None else '—'} · {pak_text}")
+    lines.append(f"              {lab_text} · сглаженный уровень {fmt(flags.get('lab_sulfur_ewma'))} мг/кг")
+    if pak:
+        state_text = "исправен" if pak.get("healthy") else "неисправен/заморожен"
+        lines.append(f"              ПАК {pak['value']:.1f} ppm ({state_text}) — признак, не результат анализа")
     lines.append(f"2 Проблема    {rec.problem_or_risk}")
+
     if outcome(rec) == "RECOMMEND":
-        moved = {t: v for t, v in rec.proposed_action.changes.items() if abs(v - current.get(t, v)) > 1e-9}
-        lines.append("3 Действие    " + ", ".join(f"{t} {current[t]:.5g} → {v:.5g}" for t, v in moved.items()))
+        lines.append("3 Действие    " + ", ".join(f"{tag} {fmt(old)} → {fmt(new)}" for tag, (old, new) in _moved(rec).items()))
     elif outcome(rec) == "HOLD":
         lines.append("3 Действие    режим не менять")
     else:
-        lines.append("3 Действие    —")
+        lines.append("3 Действие    — (отказ)")
+
     if outcome(rec) != "REFUSE":
-        best_q = rec.expected_effect.get("quality", {})
-        best_r = rec.expected_effect.get("reliability", {})
-        after = _interval(best_q)
+        quality = rec.expected_effect.get("quality", {})
+        reliability = rec.expected_effect.get("reliability", {})
+        after = _interval(quality)
         lines.append(
-            f"4 Эффект      сера: среднее {after.get('mean', float('nan')):.2f}, p95 {after.get('p95', float('nan')):.2f}"
-            f" (сейчас {base.get('mean', float('nan')):.2f} / {base.get('p95', float('nan')):.2f})"
-            f" · риск спеки {best_q.get('risk_of_spec_breach', float('nan')):.2f}"
-            f" · тяжесть {best_r.get('risk_index', float('nan')):.2f} ({best_r.get('risk_class', '?')})"
+            f"4 Эффект      сера {fmt(base.get('mean'))} → {fmt(after.get('mean'))} мг/кг, "
+            f"p95 {fmt(base.get('p95'))} → {fmt(after.get('p95'))} · "
+            f"риск нарушения {quality.get('risk_of_spec_breach', 0.0):.0%} · "
+            f"тяжесть {reliability.get('risk_class', '?')} ({reliability.get('risk_index', 0.0):.2f})"
         )
     lines.append("5 Проверки    " + "; ".join(rec.constraints_checked))
-    lines.append(f"6 Уверенность {rec.confidence}")
+    lines.append("6 Уверенность " + (f"{rec.confidence:.2f}" if rec.confidence is not None else "—"))
     lines.append(f"7 Почему      {rec.explanation}")
-    if rec.refuse:
-        lines.append(f"  Отказ       {rec.refuse_reason}")
-    else:
-        lines.append(f"  Допустимых вариантов: {rec.audit.get('n_feasible')}")
+    if decision:
+        lines.append(f"  Решение     {decision.get('outcome')}: {decision.get('why')}")
+    lines.append(f"  Вариантов   {rec.audit.get('n_candidates', '—')}, допустимых {rec.audit.get('n_feasible', '—')}")
     return "\n".join(lines)
 
 

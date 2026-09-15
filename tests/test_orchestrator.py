@@ -1,3 +1,5 @@
+import copy
+import re
 from datetime import datetime
 
 from neftecode.data.config import load_constraints
@@ -6,16 +8,28 @@ from neftecode.domain.state import ProcessState, QualityReading
 from neftecode.orchestration.orchestrator import Orchestrator
 
 T = datetime(2026, 1, 27, 16)
+T5 = "242000:T5"
 WHITELIST = {
     "controllable_parameters": [
-        {"tag": "242000:T5", "range": {"min": 347.0, "max": 388.0, "assumption": True}, "deltas": [-2.0, 0.0, 2.0]}
+        {"tag": T5, "range": {"min": 347.0, "max": 388.0, "assumption": True}, "deltas": [-2.0, 0.0, 2.0]}
     ]
 }
 
 
-class FlatQuality:
+class LeverQuality:
+    """Predicted sulfur falls by 0.5 mg/kg per °C of extra T5; risk rises above 8 mg/kg."""
+
+    def __init__(self, base: float, sensitivity: float = 0.5) -> None:
+        self.base = base
+        self.sensitivity = sensitivity
+
     def assess(self, state, action=None):
-        return QualityAssessment(metrics={"sulfur_mg_kg": 8.0}, risk_of_spec_breach=0.0, confidence=0.7)
+        delta = 0.0
+        if action is not None and T5 in action.changes:
+            delta = action.changes[T5] - state.controllable[T5]
+        sulfur = self.base - self.sensitivity * delta
+        risk = max(0.0, min(1.0, (sulfur - 8.0) / 4.0))
+        return QualityAssessment(metrics={"sulfur_mg_kg": sulfur}, risk_of_spec_breach=risk, confidence=0.7)
 
 
 class FlatReliability:
@@ -31,13 +45,13 @@ class FixedBuilder:
         return self.state
 
 
-def make_state(running=True, age_minutes=360.0):
+def make_state(lab=8.0, running=True, age_minutes=360.0):
     return ProcessState(
         timestamp=T,
-        controllable={"242000:T5": 368.9},
+        controllable={T5: 368.9},
         quality={
             "sulfur_mg_kg": QualityReading(
-                metric="sulfur_mg_kg", value=8.0, unit="mg/kg", source="lims", age_minutes=age_minutes
+                metric="sulfur_mg_kg", value=lab, unit="mg/kg", source="lims", age_minutes=age_minutes
             )
         },
         data_flags={
@@ -48,37 +62,81 @@ def make_state(running=True, age_minutes=360.0):
     )
 
 
-def make_orchestrator(tmp_path, state):
+def make_orchestrator(tmp_path, state, quality=None, hold_margin=None):
+    cfg = copy.deepcopy(load_constraints())
+    if hold_margin is not None:
+        cfg.setdefault("decision", {})["hold_margin"] = hold_margin
     return Orchestrator(
-        quality_agent=FlatQuality(),
+        quality_agent=quality or LeverQuality(base=8.0),
         reliability_agent=FlatReliability(),
         state_builder=FixedBuilder(state),
         artifacts_dir=tmp_path,
         whitelist=WHITELIST,
-        constraints_cfg=load_constraints(),
+        constraints_cfg=cfg,
     )
+
+
+def outcome_of(rec):
+    """Assert the outcome invariant, then return the outcome."""
+    outcome = rec.audit["decision"]["outcome"]
+    if outcome == "recommend":
+        assert rec.refuse is False and rec.proposed_action is not None and rec.refuse_reason is None
+    elif outcome == "hold":
+        assert rec.refuse is False and rec.proposed_action is None and rec.refuse_reason is None
+    else:
+        assert outcome == "refuse"
+        assert rec.refuse is True and rec.proposed_action is None and rec.refuse_reason
+    assert rec.explanation
+    return outcome
 
 
 def test_default_constructor_keeps_working(tmp_path):
     rec = Orchestrator(artifacts_dir=tmp_path).run_cycle(datetime(2024, 6, 1, 12), scenario="normal")
-    assert rec.refuse is False
+    assert outcome_of(rec) == "hold"
 
 
-def test_a_stable_state_holds_instead_of_changing_something(tmp_path):
-    rec = make_orchestrator(tmp_path, make_state()).run_cycle(T)
-    assert rec.refuse is False
-    assert rec.proposed_action is not None and rec.proposed_action.is_noop()
+def test_no_problem_means_hold_even_if_a_change_looks_better(tmp_path):
+    rec = make_orchestrator(tmp_path, make_state(lab=9.0), LeverQuality(base=9.0)).run_cycle(T)
+    assert outcome_of(rec) == "hold"
+    assert "признаков проблемы нет" in rec.audit["decision"]["why"]
+    assert rec.audit["decision"]["best_candidate"] != "noop", "a better-looking change existed"
 
 
-def test_the_injected_whitelist_drives_the_candidates(tmp_path):
-    rec = make_orchestrator(tmp_path, make_state()).run_cycle(T)
-    tags = set(rec.proposed_action.changes) | {t for alt in rec.alternatives for t in alt.action.changes}
-    assert tags <= {"242000:T5"}
+def test_off_spec_lab_with_a_worthwhile_step_recommends_it(tmp_path):
+    rec = make_orchestrator(tmp_path, make_state(lab=11.0), LeverQuality(base=9.5)).run_cycle(T)
+    assert outcome_of(rec) == "recommend"
+    assert rec.proposed_action.changes == {T5: 370.9}
+    assert any("вне спецификации" in t for t in rec.audit["decision"]["triggers"])
+
+
+def test_a_problem_without_a_worthwhile_step_holds(tmp_path):
+    orchestrator = make_orchestrator(tmp_path, make_state(lab=11.0), LeverQuality(base=9.5), hold_margin=1000.0)
+    rec = orchestrator.run_cycle(T)
+    assert outcome_of(rec) == "hold"
+    assert "проблема есть" in rec.audit["decision"]["why"]
+
+
+def test_an_off_spec_current_regime_is_fixed_regardless_of_the_margin(tmp_path):
+    orchestrator = make_orchestrator(tmp_path, make_state(lab=11.0), LeverQuality(base=10.5), hold_margin=1000.0)
+    rec = orchestrator.run_cycle(T)
+    assert outcome_of(rec) == "recommend"
+    assert rec.proposed_action.changes == {T5: 370.9}
+
+
+def test_nothing_feasible_refuses_and_asks_for_a_human(tmp_path):
+    rec = make_orchestrator(tmp_path, make_state(lab=12.0), LeverQuality(base=12.0)).run_cycle(T)
+    assert outcome_of(rec) == "refuse"
+    assert "человека" in rec.refuse_reason
+
+
+def test_candidates_come_from_the_injected_whitelist(tmp_path):
+    rec = make_orchestrator(tmp_path, make_state(lab=11.0), LeverQuality(base=9.5)).run_cycle(T)
+    assert set(rec.proposed_action.changes) | {t for alt in rec.alternatives for t in alt.action.changes} <= {T5}
 
 
 def test_refuses_when_the_unit_is_not_running(tmp_path):
     rec = make_orchestrator(tmp_path, make_state(running=False)).run_cycle(T)
-    assert rec.refuse is True
+    assert outcome_of(rec) == "refuse"
     assert "установка не работает" in rec.refuse_reason
     assert "242000:F26" in rec.refuse_reason
 
@@ -86,6 +144,12 @@ def test_refuses_when_the_unit_is_not_running(tmp_path):
 def test_a_shutdown_is_reported_before_stale_data(tmp_path):
     rec = make_orchestrator(tmp_path, make_state(running=False, age_minutes=10_000)).run_cycle(T)
     assert "установка не работает" in rec.refuse_reason
+
+
+def test_explanation_has_no_raw_floats(tmp_path):
+    rec = make_orchestrator(tmp_path, make_state(lab=11.0), LeverQuality(base=9.5)).run_cycle(T)
+    assert not re.search(r"\d+\.\d{5,}", rec.explanation)
+    assert "гидроочищенном ДТ" in rec.explanation
 
 
 def test_every_decision_writes_a_trace(tmp_path):
