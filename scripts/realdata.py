@@ -26,13 +26,24 @@ def tag_id(tag: str, unit: str = UNIT) -> str:
     return f"{unit}:{tag}"
 
 
-#: The frozen levers (CLAUDE.md §3). Labels are quoted from the КИП reference;
-#: units are inferred because the reference states none; steps are assumptions.
+#: The levers. Labels and units are quoted from the **corrected** 24-2000 reference the
+#: organisers issued on 16.09.2026 (`теги АВТ_24-2000.xlsx`), which for the first time
+#: states a physical quantity and a unit per tag. Steps remain assumptions.
+#:
+#: Two corrections against our earlier set, both checked against the data:
+#: - `F26` is the hydrotreated diesel leaving for shop 8, not the feed. It stays the
+#:   throughput lever anyway: `F9` (feed, mass) divided by `F26` is 0.850 t/m³, exactly
+#:   diesel density, and the two correlate at 0.9999 — one stream, two units.
+#: - `F15` is dropped. The reference calls it the volumetric feed, but 3 400 m³/h against
+#:   a mass feed of 220 t/h implies a density of 0.065, so it is not that; and the quench
+#:   is `F14`, not `F15`. It stays unresolved and may not be a lever (CLAUDE.md §6.1).
+#: `P13` replaces it: the organisers named reactor inlet pressure as a control variable,
+#: and CLAUDE.md §11 requires higher hydrogen partial pressure to reduce sulfur.
 LEVERS: dict[str, dict[str, object]] = {
-    "T5": {"step": 2.0, "unit": "°C (inferred)", "label": "Р-201: температура ГСС на выходе"},
-    "F26": {"step": 5.0, "unit": "m³/h (inferred)", "label": "Расход сырья на установку (объёмный)"},
-    "F2": {"step": 1000.0, "unit": "not stated", "label": "Газовая схема: расход на линии от ЦК-201"},
-    "F15": {"step": 50.0, "unit": "not stated", "label": "Расход квенча в Р-202"},
+    "T5": {"step": 2.0, "unit": "°C", "label": "Полисеп. Р-201. Температура ГСС на выходе"},
+    "F26": {"step": 5.0, "unit": "м³/ч", "label": "Расход гидроочищенного ДТ в цех №8, объёмный"},
+    "F2": {"step": 1000.0, "unit": "нм³/ч", "label": "Газовая схема. Расход газа на линии от ЦК-201"},
+    "P13": {"step": 0.05, "unit": "МПа", "label": "Полисеп. Р-202. Давление на входе"},
 }
 
 #: Chronological split, frozen (CLAUDE.md §6.2).
@@ -46,7 +57,7 @@ SENTINELS_242000 = (307.0, 0.0, 10.0)
 RUNNING_MIN = {"F26": 50.0, "T5": 200.0}
 
 #: A row is usable for statistics only when every lever is present and above these.
-CLEAN_OPERATING_MIN = {"T5": 200.0, "F26": 50.0, "F2": 10_000.0, "F15": 500.0}
+CLEAN_OPERATING_MIN = {"T5": 200.0, "F26": 50.0, "F2": 10_000.0, "P13": 1.0}
 
 #: Assumed lab reporting delay: a result sampled at t is usable from t + 4 h.
 LIMS_DELAY = pd.Timedelta(hours=4)
@@ -208,3 +219,118 @@ def pak_status(pak: pd.Series, t: pd.Timestamp) -> dict[str, object] | None:
         "frozen": bool(frozen),
         "healthy": bool(age <= PAK_MAX_AGE and not frozen),
     }
+
+
+# --------------------------------------------------------------- features
+
+#: Non-lever tags used as features, all with a stated quantity in the corrected
+#: reference. `Q21` is the product sulfur analyzer inside the telemetry file: its median
+#: is 8.43 ppm against the ПАК export's 8.45, so it is the same measurement on the
+#: 10-minute grid. `T6` is the second reactor's inlet temperature.
+CONTEXT_TAGS = ("F1", "P3", "W4", "F9", "T16", "F17", "T6", "Q21")
+
+#: Quantity and unit per tag, quoted from the corrected reference (16.09.2026).
+TAG_UNITS = {
+    "F1": "м³/ч", "F2": "нм³/ч", "P3": "МПа", "W4": "т/ч", "T5": "°C", "T6": "°C",
+    "W7": "т/ч", "P8": "МПа", "F9": "т/ч", "W10": "т/ч", "T11": "°C", "T12": "°C",
+    "P13": "МПа", "F14": "т/ч", "F15": "не разрешён", "T16": "°C", "F17": "т/ч",
+    "T18": "°C", "F19": "т/ч", "Q20": "ppm", "Q21": "ppm", "F22": "нм³/ч",
+    "T23": "°C", "P24": "МПа", "F25": "нм³/ч", "F26": "м³/ч",
+}
+
+#: Every feature is a trailing mean over these windows, in hours.
+FEATURE_WINDOWS_H = (2, 6, 24)
+ROWS_PER_HOUR = 6
+
+#: Gas-to-feed ratio, standing in for the hydrogen-to-feed ratio the package lacks.
+RATIO_ID = f"{tag_id('F2')}/{tag_id('F26')}"
+PAK_FEATURE = "pak:sulfur"
+
+#: Lab-history features. Continuous ones come from the non-outlier series the quality
+#: agent smooths; the binary ones count every running result, outliers included.
+LAB_FEATURE_NAMES = (
+    "lab_ewma",
+    "lab_last",
+    "lab_age_h",
+    "lab_above_last",
+    "lab_above_share7",
+    "lab_hours_since_above",
+)
+LAB_HISTORY_WINDOW = 7
+HOURS_SINCE_ABOVE_CAP = 720.0
+
+
+def load_feature_frame() -> pd.DataFrame:
+    """Levers, reference-resolved context tags, the gas-to-feed ratio and ПАК sulfur."""
+    frame = load_telemetry(tuple(LEVERS) + CONTEXT_TAGS)
+    feed = frame[tag_id("F26")]
+    frame[RATIO_ID] = (frame[tag_id("F2")] / feed).where(feed > RUNNING_MIN["F26"])
+    frame[PAK_FEATURE] = load_pak_sulfur().reindex(frame.index)
+    return frame
+
+
+def window_means(frame: pd.DataFrame) -> pd.DataFrame:
+    """Trailing means named `<column>|<hours>h`, requiring 80 % of the rows present."""
+    out = {}
+    for column in frame.columns:
+        series = frame[column]
+        for hours in FEATURE_WINDOWS_H:
+            n = hours * ROWS_PER_HOUR
+            out[f"{column}|{hours}h"] = series.rolling(n, min_periods=int(0.8 * n)).mean()
+    return pd.DataFrame(out, index=frame.index)
+
+
+def asof_matrix(features: pd.DataFrame, times: pd.DatetimeIndex, lag_hours: int = 0) -> np.ndarray:
+    """Feature rows as of `times - lag_hours`; NaN where nothing was available yet."""
+    pos = features.index.searchsorted(times - pd.Timedelta(hours=lag_hours), side="right") - 1
+    matrix = features.to_numpy()[np.clip(pos, 0, None)].astype(float)
+    matrix[pos < 0] = np.nan
+    return matrix
+
+
+def lab_history(
+    running: pd.DataFrame,
+    usable: pd.DataFrame,
+    ewma: np.ndarray,
+    cutoffs: pd.DatetimeIndex,
+) -> pd.DataFrame:
+    """Lab-history features from results already usable at each cutoff.
+
+    `running` is every lab result taken while the unit ran, outliers included, and
+    `usable` is the non-outlier subset the quality agent smooths, with `ewma` the
+    smoothed level right after each of its results. Nothing here reads a result whose
+    `available_at` is later than the cutoff, so the as-of guarantee holds.
+    """
+    cut = pd.DatetimeIndex(cutoffs).to_numpy()
+    hour = np.timedelta64(1, "h")
+
+    u_pos = np.searchsorted(usable["available_at"].to_numpy(), cut, side="right") - 1
+    u_sampled = usable["sampled_at"].to_numpy()
+    u_value = usable["sulfur_mg_kg"].to_numpy()
+    safe = np.clip(u_pos, 0, None)
+    seen = u_pos >= 0
+
+    a_pos = np.searchsorted(running["available_at"].to_numpy(), cut, side="right") - 1
+    a_sampled = running["sampled_at"].to_numpy()
+    a_above = running["above_spec"].to_numpy().astype(float)
+    above_at = np.flatnonzero(a_above > 0)
+
+    share = np.full(len(cut), np.nan)
+    since = np.full(len(cut), HOURS_SINCE_ABOVE_CAP)
+    for i, k in enumerate(a_pos):
+        if k < 0:
+            continue
+        share[i] = a_above[max(0, k - LAB_HISTORY_WINDOW + 1) : k + 1].mean()
+        j = int(np.searchsorted(above_at, k, side="right")) - 1
+        if j >= 0:
+            elapsed = float((cut[i] - a_sampled[above_at[j]]) / hour)
+            since[i] = min(elapsed, HOURS_SINCE_ABOVE_CAP)
+
+    return pd.DataFrame({
+        "lab_ewma": np.where(seen, ewma[safe], np.nan),
+        "lab_last": np.where(seen, u_value[safe], np.nan),
+        "lab_age_h": np.where(seen, (cut - u_sampled[safe]) / hour, np.nan),
+        "lab_above_last": np.where(a_pos >= 0, a_above[np.clip(a_pos, 0, None)], np.nan),
+        "lab_above_share7": share,
+        "lab_hours_since_above": since,
+    })

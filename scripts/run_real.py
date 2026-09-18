@@ -20,11 +20,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime
 
 import pandas as pd
 
-from neftecode.agents import QualityAgentBaseline, ReliabilityAgentBaseline
+from neftecode.agents import BreachClassifier, QualityAgentBaseline, ReliabilityAgentBaseline
 from neftecode.data.config import load_constraints
 from neftecode.domain.recommendation import OperatorRecommendation
 from neftecode.domain.state import ProcessState, QualityReading, TagValue
@@ -33,8 +34,29 @@ from neftecode.orchestration.orchestrator import Orchestrator
 from scripts import realdata as rd
 from scripts.analysis.quality_baseline_fit import ewma_after, usable_labels
 
-#: A daily lab result sampled around 10:00 becomes usable at 14:00.
-DECISION_HOUR = 16
+#: Recommendation cadence. The organisers ask for a step of 15 to 60 minutes; telemetry
+#: is on a 10-minute grid, so any multiple of 10 works. At 60 minutes a demo week is 168
+#: decisions, which is why a week prints its transitions rather than every line.
+DEFAULT_EVERY_MINUTES = 60
+
+
+def load_classifier() -> BreachClassifier | None:
+    """The breach classifier, if it was fitted **and** passed its acceptance checks.
+
+    Optional on purpose. Without the file — or with a run that failed the checks in
+    `scripts/analysis/breach_classifier.py` — the quality agent keeps the interval
+    estimate it used before, and nothing else in the pipeline changes.
+    """
+    path = rd.MODELS_DIR / "breach_classifier.json"
+    if not path.exists():
+        return None
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if not report.get("accepted"):
+        failed = [k for k, ok in (report.get("acceptance_checks") or {}).items() if not ok]
+        print(f"классификатор не принят ({', '.join(failed) or 'нет отчёта'}) — остаётся оценка по интервалу")
+        return None
+    model = report.get("linear_model")
+    return BreachClassifier(model) if model else None
 
 
 def load_model_file(name: str) -> dict:
@@ -51,19 +73,47 @@ def load_model_file(name: str) -> dict:
 class RealStateBuilder:
     """`ProcessState` at any timestamp, using only what was available at that time."""
 
-    def __init__(self, quality_params: dict) -> None:
+    def __init__(self, quality_params: dict, classifier_features: list[str] | None = None) -> None:
         self.tele = rd.load_telemetry()
         self.labels = pd.read_parquet(rd.MODELS_DIR / "labels.parquet").sort_values("sampled_at", kind="stable")
         self.labels = self.labels.reset_index(drop=True)
         self.pak = rd.load_pak_sulfur()
 
         usable = usable_labels(self.labels)
+        self.usable = usable
         self.usable_available = usable["available_at"].reset_index(drop=True)
         self.usable_ewma = ewma_after(
             usable["sulfur_mg_kg"].to_numpy(),
             float(quality_params["alpha"]),
             float(quality_params["sulfur_median_train"]),
         )
+        self.running_labels = (
+            self.labels[self.labels["running_at_sample"] == True]  # noqa: E712
+            .sort_values("sampled_at", kind="stable").reset_index(drop=True)
+        )
+
+        # Trailing window means, only when something asks for them: this is the stand-in
+        # for the history window `ProcessState` does not carry yet (extension E4).
+        self.windows = None
+        if classifier_features:
+            wanted = set(classifier_features)
+            frame = rd.window_means(rd.load_feature_frame())
+            self.windows = frame[[c for c in frame.columns if c in wanted]]
+
+    def _feature_windows(self, t: pd.Timestamp) -> dict[str, float | None] | None:
+        """Model inputs as of `t`: trailing telemetry means plus lab history.
+
+        A missing value stays `None` rather than being filled, so the classifier
+        disqualifies itself instead of scoring a guess.
+        """
+        if self.windows is None:
+            return None
+        times = pd.DatetimeIndex([t])
+        row = rd.asof_matrix(self.windows, times)[0]
+        history = rd.lab_history(self.running_labels, self.usable, self.usable_ewma, times).iloc[0]
+        out = {name: _number(value) for name, value in zip(self.windows.columns, row)}
+        out.update({name: _number(value) for name, value in history.items()})
+        return out
 
     def build(self, timestamp: datetime, scenario: str | None = None) -> ProcessState:
         t = pd.Timestamp(timestamp)
@@ -123,6 +173,7 @@ class RealStateBuilder:
                 "running_detail": running_detail,
                 "lab_sulfur_ewma": ewma,
                 "pak_sulfur": rd.pak_status(self.pak, t),
+                "feature_windows": self._feature_windows(t),
                 "scenario": scenario,
             },
             notes=[
@@ -130,6 +181,10 @@ class RealStateBuilder:
                 "ЛИМС доступен через 4 ч после отбора.",
             ],
         )
+
+
+def _number(value: object) -> float | None:
+    return None if value is None or pd.isna(value) else round(float(value), 6)
 
 
 def frozen_whitelist(reference: dict) -> dict:
@@ -160,6 +215,14 @@ def outcome(rec: OperatorRecommendation) -> str:
 
 def _interval(quality: dict | None) -> dict:
     return ((quality or {}).get("details") or {}).get("intervals", {}).get("sulfur_mg_kg", {})
+
+
+RISK_LABELS = {"classifier": "классификатор", "interval": "оценка по интервалу"}
+
+
+def _risk_label(quality: dict | None) -> str:
+    details = (quality or {}).get("details") or {}
+    return RISK_LABELS.get(details.get("risk_source"), "оценка")
 
 
 def _moved(rec: OperatorRecommendation) -> dict[str, tuple[float, float]]:
@@ -220,7 +283,8 @@ def full_card(rec: OperatorRecommendation) -> str:
         lines.append(
             f"4 Эффект      сера {fmt(base.get('mean'))} → {fmt(after.get('mean'))} мг/кг, "
             f"p95 {fmt(base.get('p95'))} → {fmt(after.get('p95'))} · "
-            f"риск нарушения {quality.get('risk_of_spec_breach', 0.0):.0%} · "
+            f"риск нарушения {quality.get('risk_of_spec_breach', 0.0):.0%} "
+            f"({_risk_label(quality)}) · "
             f"тяжесть {reliability.get('risk_class', '?')} ({reliability.get('risk_index', 0.0):.2f})"
         )
     lines.append("5 Проверки    " + "; ".join(rec.constraints_checked))
@@ -232,39 +296,72 @@ def full_card(rec: OperatorRecommendation) -> str:
     return "\n".join(lines)
 
 
-def decision_times(week: str) -> list[pd.Timestamp]:
+def decision_times(week: str, every_minutes: int = DEFAULT_EVERY_MINUTES) -> list[pd.Timestamp]:
     start = rd.DEMO_WEEKS[week]
-    return [start.normalize() + pd.Timedelta(days=d, hours=DECISION_HOUR) for d in range(7)]
+    step = pd.Timedelta(minutes=every_minutes)
+    return [start + step * i for i in range(int(pd.Timedelta(days=7) / step))]
+
+
+def transitions(recs: list[OperatorRecommendation]) -> list[OperatorRecommendation]:
+    """Only the decisions that differ from the one before, so a week stays readable."""
+    out, previous = [], None
+    for rec in recs:
+        key = (outcome(rec), tuple(sorted(_moved(rec))))
+        if key != previous:
+            out.append(rec)
+            previous = key
+    return out
+
+
+def use_utf8_stdout() -> None:
+    """The card draws box rules and arrows; a Windows console defaults to cp1251."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):  # pragma: no cover - platform dependent
+        pass
 
 
 def main(argv: list[str] | None = None) -> None:
+    use_utf8_stdout()
     parser = argparse.ArgumentParser(prog="run_real", description=__doc__.splitlines()[0])
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--week", choices=sorted(rd.DEMO_WEEKS), help="frozen demo week")
     group.add_argument("--at", help="ISO timestamp")
+    parser.add_argument(
+        "--every", type=int, default=DEFAULT_EVERY_MINUTES,
+        help=f"minutes between decisions in a week (default {DEFAULT_EVERY_MINUTES})",
+    )
     parser.add_argument("--all-cards", action="store_true", help="print the full card for every decision")
     args = parser.parse_args(argv)
 
     quality_params = load_model_file("quality_baseline.json")
     reference = load_model_file("reliability_reference.json")
+    classifier = load_classifier()
     orchestrator = Orchestrator(
-        quality_agent=QualityAgentBaseline(quality_params),
+        quality_agent=QualityAgentBaseline(quality_params, classifier=classifier),
         reliability_agent=ReliabilityAgentBaseline(reference),
-        state_builder=RealStateBuilder(quality_params),
+        state_builder=RealStateBuilder(
+            quality_params, classifier_features=classifier.features if classifier else None
+        ),
         artifacts_dir=rd.REPO_ROOT / "artifacts" / "real",
         whitelist=frozen_whitelist(reference),
         constraints_cfg=load_constraints(),
     )
 
-    times = decision_times(args.week) if args.week else [pd.Timestamp(args.at)]
+    times = decision_times(args.week, args.every) if args.week else [pd.Timestamp(args.at)]
     recs = [orchestrator.run_cycle(t.to_pydatetime(), scenario=args.week) for t in times]
 
     if args.week:
-        print(f"Неделя «{args.week}» с {rd.DEMO_WEEKS[args.week]:%Y-%m-%d %H:%M}, решение раз в сутки в {DECISION_HOUR}:00")
-        for rec in recs:
+        changes = transitions(recs)
+        print(
+            f"Неделя «{args.week}» с {rd.DEMO_WEEKS[args.week]:%Y-%m-%d %H:%M}: "
+            f"{len(recs)} решений раз в {args.every} мин, из них смен решения {len(changes)}"
+        )
+        for rec in changes:
             print("  " + one_line(rec))
         counts = pd.Series([outcome(r) for r in recs]).value_counts().to_dict()
-        print(f"  итог: {counts}")
+        share = {k: f"{v / len(recs):.0%}" for k, v in counts.items()}
+        print(f"  итог: {counts} — {share}")
         print()
     shown = recs if args.all_cards else [next((r for r in recs if outcome(r) == "RECOMMEND"), recs[0])]
     for rec in shown:

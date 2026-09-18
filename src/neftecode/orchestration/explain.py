@@ -35,6 +35,21 @@ def _interval(scenario: ScoredScenario | None) -> dict:
     return (scenario.quality.details or {}).get("intervals", {}).get("sulfur_mg_kg", {})
 
 
+#: How the quality agent arrived at the probability, in operator language.
+RISK_SOURCES = {
+    "classifier": "классификатор по поточному анализатору",
+    "interval": "оценка по интервалу прогноза",
+}
+
+
+def _risk(scenario: ScoredScenario) -> str:
+    source = (scenario.quality.details or {}).get("risk_source")
+    return (
+        f"Вероятность нарушения {scenario.quality.risk_of_spec_breach:.0%} "
+        f"({RISK_SOURCES.get(source, 'оценка')})."
+    )
+
+
 def describe_action(state: ProcessState, scenario: ScoredScenario) -> str:
     parts = []
     for tag, new in scenario.action.changes.items():
@@ -77,6 +92,7 @@ def build_explanation(
             f"Признаки проблемы: {'; '.join(triggers)}." if triggers else "",
             lab_text,
             f"Прогноз серы {fmt(after_mean)} мг/кг, p95 {fmt(after.get('p95'))} мг/кг.",
+            _risk(best),
         ]
     else:
         before = _interval(hold)
@@ -90,6 +106,7 @@ def build_explanation(
                 f"p95 {fmt(before.get('p95'))} → {fmt(after.get('p95'))} мг/кг; "
                 f"тяжесть режима {best.reliability.risk_class} ({best.reliability.risk_index:.2f})."
             ),
+            _risk(best),
             f"Почему этот вариант: {why}." if why else "",
         ]
     lines += [SCOPE_NOTE, PRIORITY_NOTE]

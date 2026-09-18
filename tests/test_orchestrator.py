@@ -32,9 +32,48 @@ class LeverQuality:
         return QualityAssessment(metrics={"sulfur_mg_kg": sulfur}, risk_of_spec_breach=risk, confidence=0.7)
 
 
+class SourcedQuality(LeverQuality):
+    """LeverQuality that also reports which estimate produced the probability.
+
+    The two estimates are on different scales, so the orchestrator has to pick the
+    matching threshold rather than compare them against one number.
+    """
+
+    def __init__(self, base: float, risk_source: str, risk: float) -> None:
+        super().__init__(base)
+        self.risk_source = risk_source
+        self.risk = risk
+
+    def assess(self, state, action=None):
+        delta = 0.0
+        if action is not None and T5 in action.changes:
+            delta = action.changes[T5] - state.controllable[T5]
+        return QualityAssessment(
+            metrics={"sulfur_mg_kg": self.base - self.sensitivity * delta},
+            risk_of_spec_breach=max(0.0, min(1.0, self.risk - 0.05 * delta)),
+            confidence=0.7,
+            details={"risk_source": self.risk_source},
+        )
+
+
 class FlatReliability:
     def assess(self, state, action=None):
         return ReliabilityAssessment(risk_index=0.2, risk_class="low", is_mode_allowed=True)
+
+
+class LeverReliability:
+    """Severity rises with T5, so a hotter reactor always costs reliability."""
+
+    def __init__(self, base: float = 0.45) -> None:
+        self.base = base
+
+    def assess(self, state, action=None):
+        delta = 0.0
+        if action is not None and T5 in action.changes:
+            delta = action.changes[T5] - state.controllable[T5]
+        index = max(0.0, self.base + 0.075 * delta)
+        risk_class = "low" if index < 0.4 else ("medium" if index < 0.7 else "high")
+        return ReliabilityAssessment(risk_index=round(index, 4), risk_class=risk_class, is_mode_allowed=True)
 
 
 class FixedBuilder:
@@ -62,13 +101,13 @@ def make_state(lab=8.0, running=True, age_minutes=360.0):
     )
 
 
-def make_orchestrator(tmp_path, state, quality=None, hold_margin=None):
+def make_orchestrator(tmp_path, state, quality=None, hold_margin=None, reliability=None):
     cfg = copy.deepcopy(load_constraints())
     if hold_margin is not None:
         cfg.setdefault("decision", {})["hold_margin"] = hold_margin
     return Orchestrator(
         quality_agent=quality or LeverQuality(base=8.0),
-        reliability_agent=FlatReliability(),
+        reliability_agent=reliability or FlatReliability(),
         state_builder=FixedBuilder(state),
         artifacts_dir=tmp_path,
         whitelist=WHITELIST,
@@ -155,3 +194,44 @@ def test_explanation_has_no_raw_floats(tmp_path):
 def test_every_decision_writes_a_trace(tmp_path):
     make_orchestrator(tmp_path, make_state()).run_cycle(T)
     assert list(tmp_path.glob("recommendation_*.json"))
+
+
+def test_a_classifier_probability_below_the_interval_threshold_still_triggers(tmp_path):
+    # 0.30 is under the interval threshold of 0.50 but over the classifier's 0.235.
+    quality = SourcedQuality(base=9.0, risk_source="classifier", risk=0.30)
+    rec = make_orchestrator(tmp_path, make_state(lab=9.0), quality).run_cycle(T)
+    assert outcome_of(rec) == "recommend"
+    assert rec.audit["decision"]["breach_risk_source"] == "classifier"
+    assert rec.audit["decision"]["breach_risk_threshold"] == 0.2512
+    assert any("классификатор" in trigger for trigger in rec.audit["decision"]["triggers"])
+
+
+def test_the_same_probability_from_the_interval_estimate_does_not_trigger(tmp_path):
+    quality = SourcedQuality(base=9.0, risk_source="interval", risk=0.30)
+    rec = make_orchestrator(tmp_path, make_state(lab=9.0), quality).run_cycle(T)
+    assert outcome_of(rec) == "hold"
+    assert rec.audit["decision"]["breach_risk_threshold"] == 0.5
+    assert rec.audit["decision"]["triggers"] == []
+
+
+def test_elevated_severity_alone_is_not_answered_by_raising_severity(tmp_path):
+    # A hotter reactor lowers sulfur and so scores well, but the only complaint here is
+    # that the equipment is working hard. Working it harder is not an answer.
+    rec = make_orchestrator(
+        tmp_path, make_state(lab=9.0), LeverQuality(base=9.0), reliability=LeverReliability()
+    ).run_cycle(T)
+    assert outcome_of(rec) == "hold"
+    assert rec.audit["trigger_kinds"] == ["reliability"]
+    assert rec.audit["equipment_only_filter"]["applied"] is True
+    assert rec.audit["equipment_only_filter"]["dropped"] > 0
+
+
+def test_an_off_spec_lab_lifts_the_severity_filter(tmp_path):
+    # With quality in trouble the trade is legitimate again: sulfur comes first.
+    rec = make_orchestrator(
+        tmp_path, make_state(lab=11.0), LeverQuality(base=9.5), reliability=LeverReliability()
+    ).run_cycle(T)
+    assert outcome_of(rec) == "recommend"
+    assert "lab_off_spec" in rec.audit["trigger_kinds"]
+    assert "equipment_only_filter" not in rec.audit
+    assert rec.proposed_action.changes[T5] > make_state().controllable[T5]

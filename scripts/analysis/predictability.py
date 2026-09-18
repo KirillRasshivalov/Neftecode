@@ -27,39 +27,23 @@ from scripts import realdata as rd
 from scripts.analysis.quality_baseline_fit import asof_predictions, usable_labels
 
 LAGS_H = (0, 2, 4, 8, 12, 24)
-WINDOWS_H = (2, 6, 24)
 LAMBDAS = (0.1, 1.0, 10.0, 100.0, 1_000.0, 10_000.0)
 CV_FOLDS = 5
-ROWS_PER_HOUR = 6
 
-LEVERS = ("T5", "F26", "F2", "F15")
-#: Tags on 24-2000 resolved by reference that are not levers (CLAUDE.md §6.1).
-CONTEXT = ("F1", "P3", "W4", "F9", "T16", "F17")
-RATIO = f"{rd.tag_id('F2')}/{rd.tag_id('F26')}"
-PAK = "pak:sulfur"
+LEVERS = tuple(rd.LEVERS)
+#: Feature assembly lives in `scripts/realdata.py`, so the fitting scripts and the
+#: decision path share one definition. Re-exported here for readability.
+CONTEXT = rd.CONTEXT_TAGS
+RATIO = rd.RATIO_ID
+PAK = rd.PAK_FEATURE
 
 #: Physically expected direction of each lever's effect on sulfur.
-EXPECTED_SIGN = {rd.tag_id("F26"): +1, rd.tag_id("T5"): -1, RATIO: -1}
+EXPECTED_SIGN = {rd.tag_id("F26"): +1, rd.tag_id("T5"): -1, rd.tag_id("P13"): -1, RATIO: -1}
 
 
-# ---------------------------------------------------------------- features
-
-
-def window_means(frame: pd.DataFrame) -> pd.DataFrame:
-    out = {}
-    for col in frame.columns:
-        series = frame[col]
-        for hours in WINDOWS_H:
-            n = hours * ROWS_PER_HOUR
-            out[f"{col}|{hours}h"] = series.rolling(n, min_periods=int(0.8 * n)).mean()
-    return pd.DataFrame(out, index=frame.index)
-
-
-def design(features: pd.DataFrame, times: pd.DatetimeIndex, lag_h: int) -> np.ndarray:
-    pos = features.index.searchsorted(times - pd.Timedelta(hours=lag_h), side="right") - 1
-    matrix = features.to_numpy()[np.clip(pos, 0, None)].astype(float)
-    matrix[pos < 0] = np.nan
-    return matrix
+#: Feature rows as of a timestamp minus a lag; `scripts/realdata.py` owns the rule.
+design = rd.asof_matrix
+window_means = rd.window_means
 
 
 # ------------------------------------------------------------------- ridge
@@ -118,11 +102,7 @@ def main() -> None:
     ewma = asof_predictions(u, float(params["alpha"]), float(params["sulfur_median_train"]))
     median = float(np.median(y[train]))
 
-    tele = rd.load_telemetry(LEVERS + CONTEXT)
-    feed = tele[rd.tag_id("F26")]
-    tele[RATIO] = (tele[rd.tag_id("F2")] / feed).where(feed > rd.RUNNING_MIN["F26"])
-    tele[PAK] = rd.load_pak_sulfur().reindex(tele.index)
-    features = window_means(tele)
+    features = rd.window_means(rd.load_feature_frame())
 
     def cols(names: list[str]) -> list[str]:
         return [c for c in features.columns if c.split("|")[0] in names]

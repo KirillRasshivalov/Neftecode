@@ -25,6 +25,19 @@ REFUSE = "refuse"
 #: Used when configs/constraints.yaml has no `decision` section.
 DEFAULT_HOLD_MARGIN = 5.0
 DEFAULT_ACT_WHEN_BREACH_RISK_AT_LEAST = 0.5
+#: The classifier lives on a different scale, so it gets its own threshold. 0.5 would
+#: never fire at a 15 % base rate; 0.235 catches half the breaches on the training
+#: period (`models/breach_classifier.json`).
+DEFAULT_ACT_WHEN_BREACH_RISK_AT_LEAST_CLASSIFIER = 0.2512
+
+#: How the quality agent arrived at `risk_of_spec_breach`, and what to call it.
+RISK_SOURCE_LABELS = {"classifier": "классификатор", "interval": "оценка по интервалу"}
+
+#: Trigger kinds. `reliability` alone is answered differently from the rest: raising the
+#: reactor temperature lowers sulfur and so scores well, but answering "the equipment is
+#: working hard" by making it work harder is not an answer. When severity is the only
+#: complaint, only steps that do not raise it are considered.
+QUALITY_TRIGGERS = frozenset({"lab_off_spec", "breach_risk", "constraint"})
 
 
 class Orchestrator:
@@ -44,7 +57,9 @@ class Orchestrator:
 
     - a trigger exists: the latest lab result is off-spec, the predicted breach
       probability is high, operating severity is elevated, or the current regime fails
-      a hard constraint;
+      a hard constraint. The probability threshold depends on which estimate produced
+      it — a classifier probability and an interval probability are not comparable, so
+      each has its own value in `decision`;
     - the best feasible change beats holding by at least `hold_margin` score units, or
       holding itself is infeasible.
 
@@ -80,6 +95,10 @@ class Orchestrator:
         decision = self.constraints_cfg.get("decision") or {}
         self.hold_margin = float(decision.get("hold_margin", DEFAULT_HOLD_MARGIN))
         self.act_risk = float(decision.get("act_when_breach_risk_at_least", DEFAULT_ACT_WHEN_BREACH_RISK_AT_LEAST))
+        self.act_risk_classifier = float(decision.get(
+            "act_when_breach_risk_at_least_classifier",
+            DEFAULT_ACT_WHEN_BREACH_RISK_AT_LEAST_CLASSIFIER,
+        ))
         self.sulfur_limit = float((self.constraints_cfg.get("hard") or {}).get("sulfur_mg_kg_max", 10.0))
         self.artifacts_dir = artifacts_dir or (project_root() / "artifacts")
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -123,9 +142,23 @@ class Orchestrator:
         scenarios = self.optimizer.evaluate(state)
         feasible = [s for s in scenarios if s.feasible]
         hold = next((s for s in scenarios if s.action.is_noop()), None)
-        triggers = self._triggers(state, hold, baseline_r)
+        found = self._triggers(state, hold, baseline_r)
+        kinds = [kind for kind, _ in found]
+        triggers = [text for _, text in found]
         audit["n_candidates"] = len(scenarios)
         audit["n_feasible"] = len(feasible)
+        audit["trigger_kinds"] = kinds
+
+        # Severity on its own must not be answered by a step that raises severity.
+        equipment_only = bool(kinds) and not QUALITY_TRIGGERS.intersection(kinds)
+        if equipment_only:
+            kept = self._not_harder_on_equipment(feasible, hold)
+            audit["equipment_only_filter"] = {
+                "applied": True,
+                "dropped": len(feasible) - len(kept),
+                "hold_risk_index": None if hold is None else hold.reliability.risk_index,
+            }
+            feasible = kept
 
         if not feasible:
             msg = self._message("no_feasible", "Надёжной рекомендации нет: нет допустимых вариантов.")
@@ -164,11 +197,14 @@ class Orchestrator:
             )
 
         chosen = best if outcome == RECOMMEND else hold
+        risk_threshold, risk_source = self._risk_threshold(hold) if hold else (self.act_risk, None)
         audit["decision"] = {
             "outcome": outcome,
             "why": why,
             "triggers": triggers,
             "hold_margin": self.hold_margin,
+            "breach_risk_source": risk_source,
+            "breach_risk_threshold": risk_threshold,
             "improvement_over_hold": None if improvement is None else round(improvement, 4),
             "best_candidate": best.action.label,
         }
@@ -202,22 +238,50 @@ class Orchestrator:
         state: ProcessState,
         hold: ScoredScenario | None,
         reliability: ReliabilityAssessment,
-    ) -> list[str]:
-        """Evidence that something needs a response. No trigger, no change."""
-        triggers: list[str] = []
+    ) -> list[tuple[str, str]]:
+        """Evidence that something needs a response, as (kind, text). No trigger, no change."""
+        triggers: list[tuple[str, str]] = []
         lab = state.quality.get("sulfur_mg_kg")
         if lab is not None and lab.value is not None and lab.source == "lims" and lab.value > self.sulfur_limit:
-            triggers.append(f"последний анализ ЛИМС вне спецификации: {lab.value:.1f} > {self.sulfur_limit:g} мг/кг")
-        if hold is not None and hold.quality.risk_of_spec_breach >= self.act_risk:
-            triggers.append(
-                f"вероятность нарушения спецификации {hold.quality.risk_of_spec_breach:.0%} "
-                f"(порог {self.act_risk:.0%})"
-            )
+            triggers.append((
+                "lab_off_spec",
+                f"последний анализ ЛИМС вне спецификации: {lab.value:.1f} > {self.sulfur_limit:g} мг/кг",
+            ))
+        if hold is not None:
+            threshold, source = self._risk_threshold(hold)
+            if hold.quality.risk_of_spec_breach >= threshold:
+                triggers.append((
+                    "breach_risk",
+                    f"вероятность нарушения спецификации {hold.quality.risk_of_spec_breach:.0%} "
+                    f"(порог {threshold:.0%}, {RISK_SOURCE_LABELS.get(source, source)})",
+                ))
         if reliability.risk_class in ("medium", "high"):
-            triggers.append(f"тяжесть режима {reliability.risk_class} ({reliability.risk_index:.2f})")
+            triggers.append((
+                "reliability",
+                f"тяжесть режима {reliability.risk_class} ({reliability.risk_index:.2f})",
+            ))
         if hold is not None and not hold.feasible:
-            triggers.append("текущий режим не проходит ограничения: " + "; ".join(hold.rejection_reasons[:2]))
+            triggers.append((
+                "constraint",
+                "текущий режим не проходит ограничения: " + "; ".join(hold.rejection_reasons[:2]),
+            ))
         return triggers
+
+    @staticmethod
+    def _not_harder_on_equipment(
+        feasible: list[ScoredScenario], hold: ScoredScenario | None
+    ) -> list[ScoredScenario]:
+        """Keep holding, plus only the steps that do not push severity above holding."""
+        if hold is None:
+            return feasible
+        limit = hold.reliability.risk_index + 1e-9
+        return [s for s in feasible if s.action.is_noop() or s.reliability.risk_index <= limit]
+
+    def _risk_threshold(self, hold: ScoredScenario) -> tuple[float, str]:
+        """The threshold that applies to this probability, and where it came from."""
+        source = (hold.quality.details or {}).get("risk_source") or "interval"
+        threshold = self.act_risk_classifier if source == "classifier" else self.act_risk
+        return threshold, source
 
     @staticmethod
     def _problem(triggers: list[str], quality: QualityAssessment, reliability: ReliabilityAssessment) -> str:
