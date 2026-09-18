@@ -14,7 +14,7 @@ from neftecode.data.state_builder import ProcessStateBuilder
 from neftecode.domain.agent_results import QualityAssessment, ReliabilityAssessment, ScoredScenario
 from neftecode.domain.recommendation import OperatorRecommendation
 from neftecode.domain.state import ProcessState
-from neftecode.orchestration.explain import build_explanation
+from neftecode.orchestration.explain import build_explanation, describe_blend
 from neftecode.safety.constraints import HardConstraints
 from neftecode.safety.data_quality_gate import DataQualityGate
 
@@ -75,6 +75,7 @@ class Orchestrator:
         artifacts_dir: Path | None = None,
         whitelist: dict[str, Any] | None = None,
         constraints_cfg: dict[str, Any] | None = None,
+        blending_agent: Any | None = None,
     ) -> None:
         self.quality_agent = quality_agent or QualityAgentStub()
         self.reliability_agent = reliability_agent or ReliabilityAgentStub()
@@ -100,6 +101,8 @@ class Orchestrator:
             DEFAULT_ACT_WHEN_BREACH_RISK_AT_LEAST_CLASSIFIER,
         ))
         self.sulfur_limit = float((self.constraints_cfg.get("hard") or {}).get("sulfur_mg_kg_max", 10.0))
+        # Optional: without it the card has no blend block and nothing else changes.
+        self.blending_agent = blending_agent
         self.artifacts_dir = artifacts_dir or (project_root() / "artifacts")
         self.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -169,10 +172,13 @@ class Orchestrator:
                 + (f" Детали: {detail}" if detail else "")
             )
             audit["decision"] = {"outcome": REFUSE, "why": "допустимых вариантов нет", "triggers": triggers}
+            # The regime cannot be fixed in one step, but the commercial tank may still be:
+            # say what the blend can do with what the unit is making now.
             return self._refuse(
                 timestamp, state, text,
                 problem=self._problem(triggers, baseline_q, baseline_r),
                 confidence=baseline_q.confidence, audit=audit,
+                blend=self._blend(hold),
             )
 
         best = feasible[0]
@@ -197,6 +203,9 @@ class Orchestrator:
             )
 
         chosen = best if outcome == RECOMMEND else hold
+        blend = self._blend(chosen)
+        if blend is not None:
+            audit["blend"] = blend
         risk_threshold, risk_source = self._risk_threshold(hold) if hold else (self.act_risk, None)
         audit["decision"] = {
             "outcome": outcome,
@@ -218,8 +227,9 @@ class Orchestrator:
                 "reliability": chosen.reliability.model_dump(mode="json"),
                 "score": chosen.score,
                 "hold_score": hold.score if hold_feasible else None,
+                "blend": blend,
             },
-            constraints_checked=self.hard.checked_labels(),
+            constraints_checked=self._checked(blend),
             confidence=chosen.quality.confidence,
             alternatives=[s for s in feasible if s is not chosen][:2],
             audit=audit,
@@ -228,6 +238,8 @@ class Orchestrator:
             state, chosen, refuse=False, refuse_reason=None,
             outcome=outcome, why=why, triggers=triggers, hold=hold,
         )
+        if blend is not None:
+            rec.explanation = f"{rec.explanation} {describe_blend(blend)}"
         self._persist(rec)
         return rec
 
@@ -293,6 +305,19 @@ class Orchestrator:
             text += f": прогноз серы {sulfur:.2f} мг/кг"
         return f"{text}, тяжесть режима {reliability.risk_class}"
 
+    def _blend(self, scenario: ScoredScenario | None) -> dict | None:
+        """The commercial blend for this regime, if a blending agent is attached."""
+        if self.blending_agent is None or scenario is None:
+            return None
+        sulfur = scenario.quality.metrics.get("sulfur_mg_kg")
+        return self.blending_agent.blend(sulfur).model_dump(mode="json")
+
+    def _checked(self, blend: dict | None) -> list[str]:
+        labels = list(self.hard.checked_labels())
+        if blend is not None and self.blending_agent is not None:
+            labels += self.blending_agent.labels()
+        return labels
+
     def _message(self, key: str, default: str) -> str:
         return (self.constraints_cfg.get("refuse_messages") or {}).get(key, default)
 
@@ -305,17 +330,23 @@ class Orchestrator:
         problem: str,
         confidence: float,
         audit: dict[str, Any],
+        blend: dict | None = None,
     ) -> OperatorRecommendation:
+        if blend is not None:
+            audit["blend"] = blend
         rec = OperatorRecommendation(
             timestamp=timestamp,
             refuse=True,
             refuse_reason=reason,
             problem_or_risk=problem,
-            constraints_checked=self.hard.checked_labels(),
+            expected_effect={"blend": blend} if blend is not None else {},
+            constraints_checked=self._checked(blend),
             confidence=confidence,
             audit=audit,
         )
         rec.explanation = build_explanation(state, None, refuse=True, refuse_reason=reason)
+        if blend is not None:
+            rec.explanation = f"{rec.explanation} {describe_blend(blend)}"
         self._persist(rec)
         return rec
 

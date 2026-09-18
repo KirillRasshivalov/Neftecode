@@ -25,7 +25,10 @@ from datetime import datetime
 
 import pandas as pd
 
+import yaml
+
 from neftecode.agents import BreachClassifier, QualityAgentBaseline, ReliabilityAgentBaseline
+from neftecode.agents.blending import BlendingAgent, build_additives, build_components, build_spec
 from neftecode.data.config import load_constraints
 from neftecode.domain.recommendation import OperatorRecommendation
 from neftecode.domain.state import ProcessState, QualityReading, TagValue
@@ -59,6 +62,30 @@ def load_classifier() -> BreachClassifier | None:
     return BreachClassifier(model) if model else None
 
 
+def load_blending(season: str | None = None, stocks: dict[str, float] | None = None) -> BlendingAgent | None:
+    """The blending agent, if the component properties were derived from the lab.
+
+    `season` and `stocks` override `configs/blending.yaml` — the scenario inputs the
+    organisers want to be able to change.
+    """
+    path = rd.MODELS_DIR / "blend_components.json"
+    if not path.exists():
+        print("нет models/blend_components.json — блок смеси пропущен "
+              "(python -m scripts.analysis.blend_components)")
+        return None
+    derived = json.loads(path.read_text(encoding="utf-8"))
+    config = yaml.safe_load((rd.REPO_ROOT / "configs" / "blending.yaml").read_text(encoding="utf-8"))
+    for key, tonnes in (stocks or {}).items():
+        config["components"][key]["stock_t"] = float(tonnes)
+    return BlendingAgent(
+        build_components(derived, config),
+        build_spec(config, season),
+        build_additives(config),
+        config["batch_t"],
+        config.get("grid_step_pct", 5),
+    )
+
+
 def load_model_file(name: str) -> dict:
     path = rd.MODELS_DIR / name
     if not path.exists():
@@ -73,11 +100,23 @@ def load_model_file(name: str) -> dict:
 class RealStateBuilder:
     """`ProcessState` at any timestamp, using only what was available at that time."""
 
-    def __init__(self, quality_params: dict, classifier_features: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        quality_params: dict,
+        classifier_features: list[str] | None = None,
+        overrides: dict | None = None,
+    ) -> None:
+        # Scenario inputs laid over the measured state, e.g. a feed sulfur the crude does
+        # not really have. They are marked as such in `data_flags` so no card can pass a
+        # scenario off as a measurement.
+        self.overrides = dict(overrides or {})
         self.tele = rd.load_telemetry()
         self.labels = pd.read_parquet(rd.MODELS_DIR / "labels.parquet").sort_values("sampled_at", kind="stable")
         self.labels = self.labels.reset_index(drop=True)
         self.pak = rd.load_pak_sulfur()
+        self.feed = rd.load_feed_sulfur().dropna(subset=["feed_sulfur_pct"])
+        self.feed["available_at"] = self.feed["sampled_at"] + rd.LIMS_DELAY
+        self.feed_median = float(self.feed["feed_sulfur_pct"].median())
 
         usable = usable_labels(self.labels)
         self.usable = usable
@@ -99,6 +138,15 @@ class RealStateBuilder:
             wanted = set(classifier_features)
             frame = rd.window_means(rd.load_feature_frame())
             self.windows = frame[[c for c in frame.columns if c in wanted]]
+
+    def _feed_sulfur(self, t: pd.Timestamp) -> float:
+        """Latest feed sulfur the lab had published by `t`, % mass; the median if none yet.
+
+        Feed samples are sparse (132 in 3.5 years), so this is often weeks old. It only
+        anchors a scenario ratio, never a prediction on its own.
+        """
+        pos = int(self.feed["available_at"].searchsorted(t, side="right")) - 1
+        return round(float(self.feed["feed_sulfur_pct"].iloc[pos]), 4) if pos >= 0 else self.feed_median
 
     def _feature_windows(self, t: pd.Timestamp) -> dict[str, float | None] | None:
         """Model inputs as of `t`: trailing telemetry means plus lab history.
@@ -174,6 +222,8 @@ class RealStateBuilder:
                 "lab_sulfur_ewma": ewma,
                 "pak_sulfur": rd.pak_status(self.pak, t),
                 "feature_windows": self._feature_windows(t),
+                "feed_sulfur_pct": self._feed_sulfur(t),
+                **self.overrides,
                 "scenario": scenario,
             },
             notes=[
@@ -218,6 +268,23 @@ def _interval(quality: dict | None) -> dict:
 
 
 RISK_LABELS = {"classifier": "классификатор", "interval": "оценка по интервалу"}
+COMPONENTS = {"hydrotreated_diesel": "ДТ", "kerosene": "керосин", "gas_oil": "газойль"}
+
+
+def blend_line(blend: dict) -> str:
+    if blend.get("outcome") != "blend" or not blend.get("best"):
+        return "допустимой нет — " + (blend.get("refuse_reason") or "")
+    best = blend["best"]
+    shares = " + ".join(
+        f"{COMPONENTS.get(k, k)} {w:.0%}" for k, w in best["shares"].items() if w > 0
+    )
+    props = best["properties"]
+    additive = f" + присадка {best['additive_kg_t']:.1f} кг/т" if best.get("additive") else ""
+    binding = f" · ограничивает: {', '.join(blend['binding'])}" if blend.get("binding") else ""
+    return (
+        f"{shares}{additive} · сера {props['sulfur_mg_kg']:.1f} · плотность {props['density_kg_m3']:.0f} · "
+        f"T95 {props['t95_c']:.0f} · ЦЧ {props['cetane']:.1f} · цена {best['cost_rel_per_t']:.3f}{binding}"
+    )
 
 
 def _risk_label(quality: dict | None) -> str:
@@ -290,6 +357,9 @@ def full_card(rec: OperatorRecommendation) -> str:
     lines.append("5 Проверки    " + "; ".join(rec.constraints_checked))
     lines.append("6 Уверенность " + (f"{rec.confidence:.2f}" if rec.confidence is not None else "—"))
     lines.append(f"7 Почему      {rec.explanation}")
+    blend = rec.expected_effect.get("blend") or rec.audit.get("blend")
+    if blend:
+        lines.append("8 Смесь       " + blend_line(blend))
     if decision:
         lines.append(f"  Решение     {decision.get('outcome')}: {decision.get('why')}")
     lines.append(f"  Вариантов   {rec.audit.get('n_candidates', '—')}, допустимых {rec.audit.get('n_feasible', '—')}")
@@ -337,6 +407,7 @@ def main(argv: list[str] | None = None) -> None:
     quality_params = load_model_file("quality_baseline.json")
     reference = load_model_file("reliability_reference.json")
     classifier = load_classifier()
+    blending = load_blending()
     orchestrator = Orchestrator(
         quality_agent=QualityAgentBaseline(quality_params, classifier=classifier),
         reliability_agent=ReliabilityAgentBaseline(reference),
@@ -346,6 +417,7 @@ def main(argv: list[str] | None = None) -> None:
         artifacts_dir=rd.REPO_ROOT / "artifacts" / "real",
         whitelist=frozen_whitelist(reference),
         constraints_cfg=load_constraints(),
+        blending_agent=blending,
     )
 
     times = decision_times(args.week, args.every) if args.week else [pd.Timestamp(args.at)]

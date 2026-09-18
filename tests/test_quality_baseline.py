@@ -18,7 +18,7 @@ AGENT = QualityAgentBaseline(PARAMS)
 
 
 def make_state(lab=9.0, age_hours=6.0, ewma=8.8, pak_healthy=True, with_lab=True,
-               windows=None, running=True):
+               windows=None, running=True, extra=None):
     quality = {}
     if with_lab:
         quality["sulfur_mg_kg"] = QualityReading(
@@ -27,6 +27,7 @@ def make_state(lab=9.0, age_hours=6.0, ewma=8.8, pak_healthy=True, with_lab=True
     flags = {"running": running, "pak_sulfur": {"healthy": pak_healthy}}
     if windows is not None:
         flags["feature_windows"] = windows
+    flags.update(extra or {})
     if ewma is not None:
         flags["lab_sulfur_ewma"] = ewma
     return ProcessState(
@@ -203,3 +204,40 @@ def test_a_classifier_missing_a_block_is_rejected():
 def test_an_extreme_score_stays_a_probability():
     wild = QualityAgentBaseline(PARAMS, classifier=BreachClassifier({**CLASSIFIER_MODEL, "coef": [500.0, 0.0]}))
     assert 0.0 <= risk(wild.assess(make_state(windows=WINDOWS))) <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Multiplicative response and the feed-sulfur scenario.
+
+FEED = {"feed_sulfur_pct": 1.0}
+RICHER_FEED = {"feed_sulfur_pct": 1.0, "feed_sulfur_pct_scenario": 1.3}
+
+
+def test_a_feed_sulfur_scenario_scales_the_level_in_proportion():
+    # First-order kinetics: 30 % more sulfur in, 30 % more sulfur out.
+    measured = sulfur(AGENT.assess(make_state(ewma=8.5, extra=FEED)))
+    richer = sulfur(AGENT.assess(make_state(ewma=8.5, extra=RICHER_FEED)))
+    assert richer == pytest.approx(measured * 1.3)
+
+
+def test_a_feed_scenario_is_announced_on_the_card():
+    caveats = AGENT.assess(make_state(extra=RICHER_FEED)).details["caveats"]
+    assert any("Сценарий" in text for text in caveats)
+
+
+def test_a_feed_scenario_benches_the_classifier():
+    # The analyzer sees the crude that is really there, not the hypothetical one.
+    assessment = CLASSIFIED.assess(make_state(windows=WINDOWS, extra=RICHER_FEED))
+    assert source(assessment) == "interval"
+    assert "сценарий" in assessment.details["classifier_unavailable"]
+
+
+def test_the_local_slope_at_the_reference_level_is_the_stated_sensitivity():
+    tiny = 0.01
+    base = sulfur(AGENT.assess(make_state(ewma=8.5)))
+    moved = sulfur(AGENT.assess(make_state(ewma=8.5), move("242000:T5", tiny)))
+    assert (moved - base) / tiny == pytest.approx(-0.35, rel=0.01)
+
+
+def test_no_move_however_large_drives_sulfur_negative():
+    assert sulfur(AGENT.assess(make_state(ewma=8.5), move("242000:T5", 200.0))) > 0.0

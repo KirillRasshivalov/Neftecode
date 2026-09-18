@@ -2,6 +2,7 @@ import copy
 import re
 from datetime import datetime
 
+from neftecode.agents.blending import BlendComponent, BlendingAgent, BlendSpec
 from neftecode.data.config import load_constraints
 from neftecode.domain.agent_results import QualityAssessment, ReliabilityAssessment
 from neftecode.domain.state import ProcessState, QualityReading
@@ -101,7 +102,7 @@ def make_state(lab=8.0, running=True, age_minutes=360.0):
     )
 
 
-def make_orchestrator(tmp_path, state, quality=None, hold_margin=None, reliability=None):
+def make_orchestrator(tmp_path, state, quality=None, hold_margin=None, reliability=None, blending=None):
     cfg = copy.deepcopy(load_constraints())
     if hold_margin is not None:
         cfg.setdefault("decision", {})["hold_margin"] = hold_margin
@@ -112,6 +113,7 @@ def make_orchestrator(tmp_path, state, quality=None, hold_margin=None, reliabili
         artifacts_dir=tmp_path,
         whitelist=WHITELIST,
         constraints_cfg=cfg,
+        blending_agent=blending,
     )
 
 
@@ -188,7 +190,9 @@ def test_a_shutdown_is_reported_before_stale_data(tmp_path):
 def test_explanation_has_no_raw_floats(tmp_path):
     rec = make_orchestrator(tmp_path, make_state(lab=11.0), LeverQuality(base=9.5)).run_cycle(T)
     assert not re.search(r"\d+\.\d{5,}", rec.explanation)
-    assert "гидроочищенном ДТ" in rec.explanation
+    # The card says where the 10 mg/kg limit really applies, not just where we check it.
+    assert "гидроочищенного ДТ" in rec.explanation
+    assert "товарной смеси" in rec.explanation
 
 
 def test_every_decision_writes_a_trace(tmp_path):
@@ -235,3 +239,46 @@ def test_an_off_spec_lab_lifts_the_severity_filter(tmp_path):
     assert "lab_off_spec" in rec.audit["trigger_kinds"]
     assert "equipment_only_filter" not in rec.audit
     assert rec.proposed_action.changes[T5] > make_state().controllable[T5]
+
+
+def make_blending():
+    spec = BlendSpec(season="summer", sulfur_mg_kg_max=10.0, t95_c_max=360.0,
+                     cetane_min=51.0, density_min=820.0, density_max=845.0)
+    components = [
+        BlendComponent(key="hydrotreated_diesel", label="ДТ", sulfur_mg_kg=8.6,
+                       density_kg_m3=836.1, t95_c=347.0, cetane=53.75, stock_t=2000.0),
+        BlendComponent(key="kerosene", label="керосин", sulfur_mg_kg=5.0,
+                       density_kg_m3=821.5, t95_c=290.0, cetane=52.1, stock_t=300.0),
+    ]
+    return BlendingAgent(components, spec, [], 1000.0)
+
+
+def test_with_a_blending_agent_the_card_carries_the_commercial_blend(tmp_path):
+    rec = make_orchestrator(
+        tmp_path, make_state(lab=9.0), LeverQuality(base=9.0), blending=make_blending()
+    ).run_cycle(T)
+    assert rec.expected_effect["blend"]["outcome"] == "blend"
+    assert any("товарная смесь" in label for label in rec.constraints_checked)
+    assert "Товарная смесь" in rec.explanation
+
+
+def test_when_no_step_rescues_the_regime_the_tank_still_can(tmp_path):
+    # At 11.5 mg/kg no single lever step gets the hydrotreated diesel under 10, so the
+    # hydrotreating decision is a refusal. The commercial product can still be saved by
+    # diluting with low-sulfur kerosene, and the card says so.
+    rec = make_orchestrator(
+        tmp_path, make_state(lab=9.0), LeverQuality(base=11.5), blending=make_blending()
+    ).run_cycle(T)
+    assert outcome_of(rec) == "refuse"
+    blend = rec.expected_effect["blend"]
+    assert blend["diesel_sulfur_mg_kg"] == 11.5
+    assert blend["outcome"] == "blend"
+    assert blend["best"]["shares"]["kerosene"] > 0.0
+    assert blend["best"]["properties"]["sulfur_mg_kg"] <= 10.0
+    assert "Товарная смесь" in rec.explanation
+
+
+def test_without_a_blending_agent_the_card_is_unchanged(tmp_path):
+    rec = make_orchestrator(tmp_path, make_state(lab=9.0), LeverQuality(base=9.0)).run_cycle(T)
+    assert rec.expected_effect.get("blend") is None
+    assert not any("товарная смесь" in label for label in rec.constraints_checked)

@@ -116,8 +116,22 @@ class QualityAgentBaseline:
     `scripts/analysis/quality_baseline_fit.py` and passed in. The agent reads no files
     (CLAUDE.md §2 rule 10).
 
-    The what-if layer moves the prediction when a lever changes. Directions follow the
-    physics and are fixed; magnitudes are assumptions until a model replaces them.
+    The what-if layer moves the prediction when a lever changes. It is multiplicative:
+    product sulfur = level × exp(Σ sensitivity × Δlever / reference level). At the
+    reference level (the training median) the local slope equals the stated sensitivity —
+    a finite step moves it slightly less, −0.67 rather than −0.70 mg/kg for 2 °C of T5.
+    Elsewhere it moves in proportion to the level, and the prediction can never go
+    negative however large the move. Temperature enters as an exponential, as in
+    Arrhenius kinetics; for pressure and flow the exponential matches the usual power
+    law over the few-percent steps the optimizer takes. Directions follow the physics
+    and are fixed; magnitudes are assumptions.
+
+    A scenario may state a feed sulfur other than the one measured
+    (`data_flags["feed_sulfur_pct_scenario"]`). The smoothed level was observed under
+    the measured feed, so it is rescaled by (scenario / measured) ** exponent — first-
+    order desulfurisation kinetics, product sulfur proportional to feed sulfur. This is
+    what lets the organisers' example run: sulfur in the crude rises, and the unit has
+    to compensate.
     """
 
     METRIC = "sulfur_mg_kg"
@@ -131,7 +145,11 @@ class QualityAgentBaseline:
     #: uncertainty, which widens p95 and so errs towards refusing — the safe direction.
     HORIZON_MINUTES = 180
 
-    #: mg/kg of sulfur per unit change of a lever. Signs are physics, sizes are assumed.
+    #: First-order kinetics: product sulfur proportional to feed sulfur.
+    FEED_SULFUR_EXPONENT = 1.0
+
+    #: mg/kg of sulfur per unit change of a lever **at the reference level**, the training
+    #: median. Signs are physics, sizes are assumed.
     #: The pressure figure is the local slope of the usual power law, sulfur ~ P**-0.8,
     #: at 3.92 MPa and 8.5 mg/kg. It makes pressure a deliberately weak lever: the whole
     #: historical span of `P13` is 0.42 MPa, so one step cannot do what a step of `T5` does.
@@ -193,9 +211,22 @@ class QualityAgentBaseline:
         else:
             base = median
 
+        # Scenario: a feed sulfur other than the measured one. The smoothed level was
+        # observed under the measured feed, so it scales with the ratio.
+        feed_now = state.data_flags.get("feed_sulfur_pct")
+        feed_scenario = state.data_flags.get("feed_sulfur_pct_scenario")
+        feed_factor = 1.0
+        if feed_scenario is not None and feed_now:
+            feed_factor = (float(feed_scenario) / float(feed_now)) ** self.FEED_SULFUR_EXPONENT
+            caveats.append(
+                f"Сценарий: сера в сырье {float(feed_scenario):.2f} % вместо измеренных "
+                f"{float(feed_now):.2f} % — уровень серы пересчитан ×{feed_factor:.2f}."
+            )
+        level = base * feed_factor
+
         deltas = self._deltas(state, action)
-        shift = self._what_if(state, deltas)
-        mean = max(base + shift, 0.0)
+        mean = level * math.exp(self._what_if(state, deltas) / median)
+        shift = mean - level
 
         ref_gap = float(self.params["ref_gap_hours"])
         effective_age = age_h if age_h is not None else 4.0 * ref_gap
@@ -209,7 +240,7 @@ class QualityAgentBaseline:
         # is allowed to speak, keeps the risk - but it cannot answer a what-if, because
         # the levers are noise to it. So the effect of an action stays with the physics
         # layer and enters as an increment over the classifier reading of the regime.
-        hold_mean = max(base, 0.0)
+        hold_mean = level
         hold_risk = _prob_above(max(hold_mean + q05, 0.0), hold_mean + q95, self.SPEC_LIMIT_MG_KG)
         interval_risk = _prob_above(p05, p95, self.SPEC_LIMIT_MG_KG)
         probability, terms, unavailable = self._classify(state)
@@ -248,7 +279,7 @@ class QualityAgentBaseline:
             assumptions=[
                 "Базовая модель: экспоненциальное сглаживание результатов ЛИМС, доступных на момент решения (задержка 4 ч).",
                 "Интервал p05–p95 — квантили ошибки этого прогноза на обучающем периоде; расширяется с возрастом последнего анализа.",
-                "Влияние рычагов: знаки по физике процесса, величины — допущения.",
+                "Влияние рычагов мультипликативное: знаки по физике процесса, величины — допущения.",
                 "Сера оценивается в гидроочищенном ДТ, а не в товарном.",
                 "Вероятность нарушения: классификатор при исправном анализаторе, иначе оценка "
                 "по интервалу. Эффект действия в обоих случаях даёт физический слой, не модель.",
@@ -262,6 +293,10 @@ class QualityAgentBaseline:
                 "ewma": round(base, 4),
                 "alpha": alpha,
                 "lab_age_hours": None if age_h is None else round(age_h, 2),
+                "level": round(level, 4),
+                "feed_factor": round(feed_factor, 4),
+                "feed_sulfur_pct": None if feed_now is None else round(float(feed_now), 4),
+                "feed_sulfur_pct_scenario": None if feed_scenario is None else round(float(feed_scenario), 4),
                 "what_if_shift": round(shift, 4),
                 "deltas": deltas,
                 "risk_source": risk_source,
@@ -286,6 +321,10 @@ class QualityAgentBaseline:
         """
         if self.classifier is None:
             return None, [], "классификатор не подключён"
+        if state.data_flags.get("feed_sulfur_pct_scenario") is not None:
+            # The classifier reads the analyzer that is really there; a hypothetical feed
+            # has no measurement behind it, so the risk comes from the shifted interval.
+            return None, [], "сценарий с изменённой серой в сырье: анализатор его не видит"
         if state.data_flags.get("running") is not True:
             return None, [], "установка не работает"
         if (state.data_flags.get("pak_sulfur") or {}).get("healthy") is not True:
@@ -314,6 +353,10 @@ class QualityAgentBaseline:
         return deltas
 
     def _what_if(self, state: ProcessState, deltas: dict[str, float]) -> float:
+        """Sum of sensitivity × Δlever, in mg/kg at the reference level.
+
+        `assess` turns it into the multiplicative factor exp(sum / reference level).
+        """
         if not deltas:
             return 0.0
         shift = sum(self.sensitivity.get(tag, 0.0) * delta for tag, delta in deltas.items())

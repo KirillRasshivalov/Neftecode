@@ -4,8 +4,8 @@ from neftecode.domain.agent_results import ScoredScenario
 from neftecode.domain.state import ProcessState
 
 SCOPE_NOTE = (
-    "Ограничение по сере проверяется в гидроочищенном ДТ, а не в товарном "
-    "(допущение: данных блендинга в пакете нет)."
+    "Режим гидроочистки проверяется по сере гидроочищенного ДТ; норма 10 мг/кг по ТЗ "
+    "относится к товарной смеси и проверяется на ней."
 )
 PRIORITY_NOTE = "Качество и жёсткие ограничения имеют приоритет над экономическим эффектом."
 
@@ -48,6 +48,34 @@ def _risk(scenario: ScoredScenario) -> str:
         f"Вероятность нарушения {scenario.quality.risk_of_spec_breach:.0%} "
         f"({RISK_SOURCES.get(source, 'оценка')})."
     )
+
+
+#: Blend components in operator language.
+COMPONENT_NAMES = {"hydrotreated_diesel": "очищенный ДТ", "kerosene": "керосин", "gas_oil": "газойль"}
+
+
+def describe_blend(blend: dict | None) -> str:
+    """One sentence on the commercial blend, or on why there is none."""
+    if not blend:
+        return ""
+    if blend.get("outcome") != "blend" or not blend.get("best"):
+        return f"Товарная смесь: {blend.get('refuse_reason') or 'допустимой нет'}"
+    best = blend["best"]
+    parts = ", ".join(
+        f"{COMPONENT_NAMES.get(key, key)} {share:.0%}"
+        for key, share in best["shares"].items()
+        if share > 0
+    )
+    props = best["properties"]
+    text = (
+        f"Товарная смесь: {parts}"
+        + (f", присадка {best['additive_kg_t']:.1f} кг/т" if best.get("additive") else "")
+        + f"; сера {props['sulfur_mg_kg']:.1f} мг/кг, плотность {props['density_kg_m3']:.0f} кг/м³, "
+        f"T95 {props['t95_c']:.0f} °C, цетановое число {props['cetane']:.1f} — в спецификации."
+    )
+    if blend.get("binding"):
+        text += f" Ограничивает: {', '.join(blend['binding'])}."
+    return text
 
 
 def describe_action(state: ProcessState, scenario: ScoredScenario) -> str:
