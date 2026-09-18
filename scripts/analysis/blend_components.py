@@ -165,7 +165,7 @@ def main() -> None:
     out = rd.MODELS_DIR / "blend_components.json"
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    print(f"wrote {out}\n")
+    print(f"wrote {rd.rel(out)}\n")
     print(f"implausible lab values dropped: {report['implausible_values_dropped']}")
     print(f"hydrotreating shift (product - feed): {shift}")
     print(f"ASTM D976 on hydrotreated diesel: {validation}")

@@ -83,6 +83,14 @@ DEMO_WEEKS = {
 }
 
 
+def rel(path: Path) -> str:
+    """A path relative to the repository root, for logs that end up in shared artifacts."""
+    try:
+        return Path(path).resolve().relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def cache_path(name: str) -> Path:
     path = CACHE_DIR / f"{name}.parquet"
     if not path.exists():

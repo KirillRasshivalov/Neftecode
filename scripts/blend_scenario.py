@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> None:
     tank = blending.blend(hold_sulfur).model_dump(mode="json")
     print(f"  Б. резервуар режим не менять, сера ДТ {hold_sulfur:.2f} мг/кг")
     print(f"               смесь: {blend_line(tank)}")
-    print(f"\nJSON-трассы: {scenario_orch.artifacts_dir}")
+    print(f"\nJSON-трассы: {rd.rel(scenario_orch.artifacts_dir)}")
 
 
 if __name__ == "__main__":

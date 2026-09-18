@@ -63,7 +63,7 @@ def main() -> None:
     out = rd.MODELS_DIR / "reliability_reference.json"
     rd.MODELS_DIR.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(reference, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"wrote {out}")
+    print(f"wrote {rd.rel(out)}")
     print(json.dumps({k: v for k, v in reference.items() if k != "t5_by_f26"}, ensure_ascii=False, indent=2))
     print(f"t5_by_f26: {len(bands)} bands")
     for b in bands:

@@ -391,7 +391,7 @@ def use_utf8_stdout() -> None:
         pass
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> list[OperatorRecommendation]:
     use_utf8_stdout()
     parser = argparse.ArgumentParser(prog="run_real", description=__doc__.splitlines()[0])
     group = parser.add_mutually_exclusive_group(required=True)
@@ -439,7 +439,8 @@ def main(argv: list[str] | None = None) -> None:
     for rec in shown:
         print(full_card(rec))
         print()
-    print(f"JSON-трассы: {orchestrator.artifacts_dir}")
+    print(f"JSON-трассы: {rd.rel(orchestrator.artifacts_dir)}")
+    return recs
 
 
 if __name__ == "__main__":

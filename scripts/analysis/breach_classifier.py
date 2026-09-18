@@ -464,7 +464,7 @@ def main() -> None:
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=float), encoding="utf-8")
 
     pd.set_option("display.width", 220)
-    print(f"wrote {out}\n")
+    print(f"wrote {rd.rel(out)}\n")
     print(
         f"labels: {len(running)} running, base rate train {base_rate:.3f} / held-out {y_ho.mean():.3f}, "
         f"{int(y_ho.sum())} held-out breaches over {weeks:.1f} weeks\n"

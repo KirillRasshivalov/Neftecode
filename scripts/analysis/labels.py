@@ -59,7 +59,7 @@ def main() -> None:
     labels.to_parquet(out, index=False)
 
     running = labels["running_at_sample"]
-    print(f"wrote {out}")
+    print(f"wrote {rd.rel(out)}")
     print(f"lab results            : {len(labels):,}")
     print(f"running at sampling    : {int((running == True).sum()):,}")  # noqa: E712
     print(f"not running            : {int((running == False).sum()):,}")  # noqa: E712

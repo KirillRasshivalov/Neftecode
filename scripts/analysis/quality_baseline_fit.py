@@ -100,7 +100,7 @@ def main() -> None:
     }
     out = rd.MODELS_DIR / "quality_baseline.json"
     out.write_text(json.dumps(params, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"wrote {out}")
+    print(f"wrote {rd.rel(out)}")
     print(json.dumps(params, ensure_ascii=False, indent=2))
 
 

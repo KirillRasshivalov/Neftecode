@@ -201,7 +201,7 @@ def main() -> None:
     out.write_text(json.dumps(report, ensure_ascii=False, indent=2, default=float), encoding="utf-8")
 
     pd.set_option("display.width", 200)
-    print(f"wrote {out}\n")
+    print(f"wrote {rd.rel(out)}\n")
     print(table[["variant", "lag_h", "lambda", "cv_mse_train", "r2_train", "r2_heldout", "mae_heldout",
                  "mae_median", "mae_ewma", "n_heldout"]].to_string(index=False))
     print("\nselected by training CV:", {k: chosen[k] for k in ("variant", "lag_h", "lambda", "r2_heldout", "mae_heldout", "mae_ewma")})
