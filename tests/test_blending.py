@@ -154,3 +154,31 @@ def test_the_season_picks_the_organisers_limits():
     assert build_spec(config).cetane_min == 51.0
     winter = build_spec(config, "winter")
     assert (winter.cetane_min, winter.density_min) == (49.0, 800.0)
+
+
+# ---------------------------------------------------------------------------
+# The sulfur budget the blending agent hands to the hydrotreating side.
+
+
+def test_the_budget_is_what_the_diluent_can_carry_under_the_dilution_cap():
+    budget = agent().sulfur_budget()
+    # 70 % diesel + 30 % kerosene at 5 mg/kg, 0.5 mg/kg under the limit: (9.5 − 1.5) / 0.7
+    assert budget.budget_mg_kg == pytest.approx(8.0 / 0.7, abs=1e-3)
+    assert budget.shares["hydrotreated_diesel"] >= 0.7 - 1e-9
+
+
+def test_the_dilution_cap_keeps_the_budget_from_parking_the_unit_s_product():
+    loose = BlendingAgent(standard(), SUMMER, [IMPROVER], 1000.0, max_dilution_share=0.7)
+    assert loose.sulfur_budget().budget_mg_kg > agent().sulfur_budget().budget_mg_kg
+
+
+def test_without_any_diluent_the_budget_is_the_limit_less_the_margin():
+    only_diesel = [component("hydrotreated_diesel", 8.6, 836.1, 347.0, 53.75)]
+    assert agent(only_diesel).sulfur_budget().budget_mg_kg == pytest.approx(9.5)
+
+
+def test_no_budget_when_no_blend_passes_without_additive():
+    heavy = [component("hydrotreated_diesel", 8.0, 870.0, 347.0, 53.0)]  # too dense on its own
+    budget = agent(heavy).sulfur_budget()
+    assert budget.budget_mg_kg is None
+    assert budget.reason

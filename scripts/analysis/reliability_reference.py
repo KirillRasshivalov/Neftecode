@@ -15,6 +15,9 @@ from __future__ import annotations
 import json
 import math
 
+import numpy as np
+import pandas as pd
+
 from scripts import realdata as rd
 
 F26_BAND = 10.0
@@ -52,8 +55,23 @@ def main() -> None:
             })
         edge += F26_BAND
 
+    # Catalyst cycles, training period only. The excess temperature at which the plant
+    # changed the catalyst is the end-of-run level: no equipment data states one.
+    train_tele = tele[tele.index <= rd.SPLIT_AT]
+    daily = rd.excess_t5_daily(train_tele, bands)
+    changes = [c for c in rd.catalyst_changes(daily, rd.shutdown_ends(train_tele))
+               if c + pd.Timedelta(days=rd.CATALYST_WINDOW_DAYS) <= rd.SPLIT_AT]
+    before = [float(daily.loc[: c - pd.Timedelta(seconds=1)].tail(rd.CATALYST_WINDOW_DAYS).median()) for c in changes]
+    catalyst = {
+        "changes_in_training": [c.isoformat() for c in changes],
+        "excess_before_change_c": [round(v, 2) for v in before],
+        "eor_excess_c": round(float(np.median(before)), 2) if before else None,
+        "change_fall_c": rd.CATALYST_CHANGE_FALL_C,
+    }
+
     reference = {
         "fitted_on": f"train: date <= {rd.SPLIT_AT.isoformat()}, clean operating rows",
+        "catalyst": catalyst,
         "n_rows": int(len(clean)),
         "envelope": envelope,
         "t5_by_f26": bands,

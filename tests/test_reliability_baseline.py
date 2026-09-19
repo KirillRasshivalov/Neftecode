@@ -71,3 +71,32 @@ def test_missing_reference_band_is_reported_not_fatal():
 def test_incomplete_reference_is_rejected():
     with pytest.raises(ValueError):
         ReliabilityAgentBaseline({"envelope": {}})
+
+
+# ---------------------------------------------------------------------------
+# The model range and the plant at its edge. Without a tolerance the decision chattered:
+# a unit running just past p99 was "not allowed" one hour and allowed the next.
+
+def test_the_current_regime_one_step_past_the_range_is_allowed_with_a_warning():
+    assessment = AGENT.assess(make_state(**{"242000:P13": 4.06}))  # p99 4.03, step 0.05
+    assert assessment.is_mode_allowed is True
+    assert any("у границы" in factor for factor in assessment.risk_factors)
+
+
+def test_the_current_regime_more_than_a_step_past_the_range_is_not_allowed():
+    assessment = AGENT.assess(make_state(**{"242000:P13": 4.10}))
+    assert assessment.is_mode_allowed is False
+    assert any("больше чем на шаг" in factor for factor in assessment.risk_factors)
+
+
+def test_a_step_may_not_move_a_lever_out_of_the_range():
+    state = make_state(**{"242000:T5": 386.9})
+    step_up = ControlAction(changes={"242000:T5": 388.9})  # p99 387.9
+    assessment = AGENT.assess(state, step_up)
+    assert assessment.is_mode_allowed is False
+    assert any("выводит" in factor for factor in assessment.risk_factors)
+
+
+def test_moving_another_lever_leaves_the_tolerated_one_alone():
+    state = make_state(**{"242000:P13": 4.06})
+    assert AGENT.assess(state, ControlAction(changes={"242000:T5": 372.7})).is_mode_allowed is True

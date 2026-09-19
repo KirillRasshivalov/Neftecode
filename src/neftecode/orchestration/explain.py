@@ -78,6 +78,33 @@ def describe_blend(blend: dict | None) -> str:
     return text
 
 
+def describe_budget(budget: dict | None, diesel_sulfur: float | None, base_limit: float) -> str:
+    """What the tank's sulfur budget meant for this decision."""
+    if not budget or budget.get("budget_mg_kg") is None:
+        return ""
+    limit = float(budget.get("limit_in_force_mg_kg") or budget["budget_mg_kg"])
+    if diesel_sulfur is not None and diesel_sulfur > base_limit:
+        return (
+            f"Сера гидроочищенного ДТ {diesel_sulfur:.1f} мг/кг выше {base_limit:g}, но в пределах "
+            f"серного бюджета резервуара {limit:.1f}: норму товарного продукта обеспечивает смесь."
+        )
+    return f"Серный бюджет резервуара: гидроочищенный ДТ до {limit:.1f} мг/кг."
+
+
+def describe_economy(economy: dict | None) -> str:
+    """The room to cool the reactor, as information for the technologist."""
+    if not economy:
+        return ""
+    text = (
+        f"Резерв для экономии: по модели отклика {economy['lever']} можно снизить с "
+        f"{fmt(economy['from'])} до {fmt(economy['to'])} °C — сера ДТ составит "
+        f"{economy['sulfur_mg_kg']:.1f} мг/кг при лимите {economy['limit_mg_kg']:.1f}"
+    )
+    if economy.get("needs_blend"):
+        text += ", с разбавлением в смеси"
+    return text + ". Это информация для технолога, а не рекомендация."
+
+
 def describe_action(state: ProcessState, scenario: ScoredScenario) -> str:
     parts = []
     for tag, new in scenario.action.changes.items():

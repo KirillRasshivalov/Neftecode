@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +15,8 @@ from neftecode.data.state_builder import ProcessStateBuilder
 from neftecode.domain.agent_results import QualityAssessment, ReliabilityAssessment, ScoredScenario
 from neftecode.domain.recommendation import OperatorRecommendation
 from neftecode.domain.state import ProcessState
-from neftecode.orchestration.explain import build_explanation, describe_blend
+from neftecode.domain.actions import ControlAction
+from neftecode.orchestration.explain import build_explanation, describe_blend, describe_budget, describe_economy
 from neftecode.safety.constraints import HardConstraints
 from neftecode.safety.data_quality_gate import DataQualityGate
 
@@ -38,6 +40,10 @@ RISK_SOURCE_LABELS = {"classifier": "классификатор", "interval": "�
 #: working hard" by making it work harder is not an answer. When severity is the only
 #: complaint, only steps that do not raise it are considered.
 QUALITY_TRIGGERS = frozenset({"lab_off_spec", "breach_risk", "constraint"})
+
+#: The energy lever: a cooler reactor spends less and ages the catalyst slower.
+ECONOMY_LEVER = "242000:T5"
+ECONOMY_MAX_STEPS = 10
 
 
 class Orchestrator:
@@ -142,7 +148,15 @@ class Orchestrator:
                 problem="; ".join(gate.reasons), confidence=0.0, audit=audit,
             )
 
-        scenarios = self.optimizer.evaluate(state)
+        # The blending agent speaks first. How much sulfur the tank can take sets the
+        # limit the hydrotreating regime is checked against — the organisers' 10 mg/kg
+        # is a limit on the commercial product, not on this intermediate.
+        budget = self._budget()
+        limit = self._sulfur_limit_for(budget)
+        if budget is not None:
+            audit["sulfur_budget"] = {**budget.model_dump(mode="json"), "limit_in_force_mg_kg": limit}
+        optimizer, hard = self._planners(limit)
+        scenarios = optimizer.evaluate(state)
         feasible = [s for s in scenarios if s.feasible]
         hold = next((s for s in scenarios if s.action.is_noop()), None)
         found = self._triggers(state, hold, baseline_r)
@@ -165,7 +179,7 @@ class Orchestrator:
 
         if not feasible:
             msg = self._message("no_feasible", "Надёжной рекомендации нет: нет допустимых вариантов.")
-            detail = "; ".join((hold.rejection_reasons if hold else [])[:3])
+            detail = "; ".join(self._rejection_detail(hold)[:3]) if hold else ""
             text = (
                 f"{msg} Текущий режим не проходит ограничения, и ни один допустимый шаг этого "
                 f"не исправляет — нужно решение человека."
@@ -178,7 +192,7 @@ class Orchestrator:
                 timestamp, state, text,
                 problem=self._problem(triggers, baseline_q, baseline_r),
                 confidence=baseline_q.confidence, audit=audit,
-                blend=self._blend(hold),
+                blend=self._blend(hold), hard=hard,
             )
 
         best = feasible[0]
@@ -206,6 +220,11 @@ class Orchestrator:
         blend = self._blend(chosen)
         if blend is not None:
             audit["blend"] = blend
+        # Room to cool the reactor, only when the regime is held with nothing wrong.
+        # Computed before the recommendation is built: the model copies the audit.
+        economy = self._economy(state, limit) if outcome == HOLD and not triggers else None
+        if economy is not None:
+            audit["economy"] = economy
         risk_threshold, risk_source = self._risk_threshold(hold) if hold else (self.act_risk, None)
         audit["decision"] = {
             "outcome": outcome,
@@ -229,7 +248,7 @@ class Orchestrator:
                 "hold_score": hold.score if hold_feasible else None,
                 "blend": blend,
             },
-            constraints_checked=self._checked(blend),
+            constraints_checked=self._checked(blend, hard),
             confidence=chosen.quality.confidence,
             alternatives=[s for s in feasible if s is not chosen][:2],
             audit=audit,
@@ -240,6 +259,13 @@ class Orchestrator:
         )
         if blend is not None:
             rec.explanation = f"{rec.explanation} {describe_blend(blend)}"
+        budget_text = describe_budget(
+            audit.get("sulfur_budget"), chosen.quality.metrics.get("sulfur_mg_kg"), self.sulfur_limit
+        )
+        if budget_text:
+            rec.explanation = f"{rec.explanation} {budget_text}"
+        if economy is not None:
+            rec.explanation = f"{rec.explanation} {describe_economy(economy)}"
         self._persist(rec)
         return rec
 
@@ -275,7 +301,7 @@ class Orchestrator:
         if hold is not None and not hold.feasible:
             triggers.append((
                 "constraint",
-                "текущий режим не проходит ограничения: " + "; ".join(hold.rejection_reasons[:2]),
+                "текущий режим не проходит ограничения: " + "; ".join(self._rejection_detail(hold)[:2]),
             ))
         return triggers
 
@@ -288,6 +314,22 @@ class Orchestrator:
             return feasible
         limit = hold.reliability.risk_index + 1e-9
         return [s for s in feasible if s.action.is_noop() or s.reliability.risk_index <= limit]
+
+    @staticmethod
+    def _rejection_detail(scenario: ScoredScenario) -> list[str]:
+        """Why a candidate failed, in the words of the agent that knows.
+
+        The hard check reports a mode the reliability agent rejected only as "not
+        allowed"; the operator needs which lever, where it is and what the range is, and
+        that is in the reliability agent's own risk factors.
+        """
+        detail = [r for r in scenario.rejection_reasons if "reliability agent" not in r]
+        if not scenario.reliability.is_mode_allowed:
+            detail = [
+                f for f in scenario.reliability.risk_factors
+                if "диапазон" in f or "Индекс тяжести" in f or "не работает" in f
+            ] + detail
+        return detail or list(scenario.rejection_reasons)
 
     def _risk_threshold(self, hold: ScoredScenario) -> tuple[float, str]:
         """The threshold that applies to this probability, and where it came from."""
@@ -312,8 +354,83 @@ class Orchestrator:
         sulfur = scenario.quality.metrics.get("sulfur_mg_kg")
         return self.blending_agent.blend(sulfur).model_dump(mode="json")
 
-    def _checked(self, blend: dict | None) -> list[str]:
-        labels = list(self.hard.checked_labels())
+    def _budget(self):
+        """The tank's sulfur budget, when a blending agent is attached."""
+        if self.blending_agent is None or not hasattr(self.blending_agent, "sulfur_budget"):
+            return None
+        return self.blending_agent.sulfur_budget()
+
+    def _sulfur_limit_for(self, budget) -> float:
+        """The budget may relax the product limit, never tighten it.
+
+        Without a blending agent the regime was already held to that limit; the budget
+        only adds the room the tank provides.
+        """
+        if budget is None or budget.budget_mg_kg is None:
+            return self.sulfur_limit
+        return max(self.sulfur_limit, float(budget.budget_mg_kg))
+
+    def _planners(self, limit: float) -> tuple[OptimizerAgent, HardConstraints]:
+        """The optimizer and the hard check for this cycle's sulfur limit.
+
+        The hard check itself is unchanged; it simply receives the limit in force.
+        """
+        if abs(limit - self.sulfur_limit) < 1e-9:
+            return self.optimizer, self.hard
+        cfg = copy.deepcopy(self.constraints_cfg)
+        cfg.setdefault("hard", {})["sulfur_mg_kg_max"] = round(limit, 3)
+        hard = HardConstraints(cfg, whitelist=self.whitelist)
+        optimizer = OptimizerAgent(
+            quality_agent=self.quality_agent,
+            reliability_agent=self.reliability_agent,
+            constraints=hard,
+            whitelist=self.whitelist,
+            ranking_cfg=cfg,
+        )
+        return optimizer, hard
+
+    def _economy(self, state: ProcessState, limit: float) -> dict | None:
+        """How far the reactor could cool with the diesel still inside the sulfur limit.
+
+        Information for the technologist, not a recommendation: the regime is on
+        specification, and a cooler reactor spends less energy and ages the catalyst
+        slower — the organisers: the more sulfur the hydrotreated diesel may keep, the
+        cheaper it is to make. The response is the quality agent's what-if, an
+        assumption, and the card says so.
+        """
+        item = next(
+            (p for p in self.whitelist.get("controllable_parameters", []) if p.get("tag") == ECONOMY_LEVER),
+            None,
+        )
+        current = state.controllable.get(ECONOMY_LEVER)
+        if item is None or current is None:
+            return None
+        step = max((abs(float(d)) for d in item.get("deltas", []) if d), default=0.0)
+        lowest = float((item.get("range") or {}).get("min", float("-inf")))
+        if step <= 0.0:
+            return None
+        found = None
+        for k in range(1, ECONOMY_MAX_STEPS + 1):
+            target = float(current) - k * step
+            if target < lowest:
+                break
+            quality = self.quality_agent.assess(state, ControlAction(changes={ECONOMY_LEVER: round(target, 4)}))
+            sulfur = quality.metrics.get("sulfur_mg_kg")
+            if sulfur is None or sulfur > limit:
+                break
+            found = {
+                "lever": ECONOMY_LEVER,
+                "from": round(float(current), 3),
+                "to": round(target, 3),
+                "delta": round(-k * step, 3),
+                "sulfur_mg_kg": round(float(sulfur), 3),
+                "limit_mg_kg": round(limit, 3),
+                "needs_blend": float(sulfur) > self.sulfur_limit,
+            }
+        return found
+
+    def _checked(self, blend: dict | None, hard: HardConstraints | None = None) -> list[str]:
+        labels = list((hard or self.hard).checked_labels())
         if blend is not None and self.blending_agent is not None:
             labels += self.blending_agent.labels()
         return labels
@@ -331,6 +448,7 @@ class Orchestrator:
         confidence: float,
         audit: dict[str, Any],
         blend: dict | None = None,
+        hard: HardConstraints | None = None,
     ) -> OperatorRecommendation:
         if blend is not None:
             audit["blend"] = blend
@@ -340,7 +458,7 @@ class Orchestrator:
             refuse_reason=reason,
             problem_or_risk=problem,
             expected_effect={"blend": blend} if blend is not None else {},
-            constraints_checked=self._checked(blend),
+            constraints_checked=self._checked(blend, hard),
             confidence=confidence,
             audit=audit,
         )

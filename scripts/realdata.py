@@ -75,11 +75,20 @@ SPEC_LIMIT_MG_KG = 10.0
 #: Lab results above this are screened as possible outliers, not silently dropped.
 OUTLIER_ABOVE_MG_KG = 50.0
 
-#: Frozen demo weeks (CLAUDE.md §6.2), all in the held-out region.
+#: Demo weeks, all in the held-out region (CLAUDE.md §6.2).
+#:
+#: `degraded` moved on 19.09.2026. The week first chosen for it turned out to be a
+#: shutdown, and a stopped unit is the least interesting refusal there is. From
+#: 02.07.2026 the unit runs the whole week while its data fails: the newest lab result
+#: is 348 h old and the analyzer is broken for 58 % of the week. The system refuses
+#: while it has no quality source, decides on the fallback estimate while only the
+#: analyzer is down, and refuses again when fresh catalyst takes the reactor below any
+#: temperature the model has seen. The shutdown stays as a scenario of its own.
 DEMO_WEEKS = {
     "stable": pd.Timestamp("2026-01-25 10:00"),
     "risk": pd.Timestamp("2026-07-12 10:00"),
-    "degraded": pd.Timestamp("2026-06-21 10:00"),
+    "degraded": pd.Timestamp("2026-07-02 10:00"),
+    "shutdown": pd.Timestamp("2026-06-21 10:00"),
 }
 
 
@@ -342,3 +351,132 @@ def lab_history(
         "lab_above_share7": share,
         "lab_hours_since_above": since,
     })
+
+
+# --------------------------------------------------------------- catalyst
+
+#: A restart after which the excess reactor temperature falls by this much or more is
+#: read as a catalyst change: a catalyst needs a shutdown, and a fresh one runs cooler.
+CATALYST_CHANGE_FALL_C = 8.0
+#: Days of operation compared on each side of a restart, and the confirmation delay.
+CATALYST_WINDOW_DAYS = 21
+#: The drift is fitted over the last year of the cycle: long enough to average out the
+#: seasonal swing of the feed, short enough to follow the current rate.
+CATALYST_DRIFT_DAYS = 365
+#: A fresh catalyst loses activity fast at first and only then settles into a steady
+#: drift; the first days of a cycle are never extrapolated.
+CATALYST_MIN_DAYS = 90
+
+
+def excess_t5_daily(tele: pd.DataFrame, bands: list[dict]) -> pd.Series:
+    """Daily median of how much hotter `242000:T5` runs than usual at the same feed rate.
+
+    "Usual" is the training-period median of T5 in the feed-rate band (the reliability
+    reference). Rising excess at constant throughput is the standard signature of a
+    catalyst losing activity; it is what the operators compensate by heating.
+    """
+    ok = clean_operating_mask(tele)
+    t5, f26 = tele.loc[ok, tag_id("T5")], tele.loc[ok, tag_id("F26")]
+    edges = np.array([b["lo"] for b in bands] + [bands[-1]["hi"]])
+    medians = np.array([b["median"] for b in bands])
+    idx = np.searchsorted(edges, f26.to_numpy(), side="right") - 1
+    inside = (idx >= 0) & (idx < len(bands))
+    excess = pd.Series(t5.to_numpy()[inside] - medians[idx[inside]], index=t5.index[inside])
+    return excess.resample("D").median().dropna()
+
+
+#: A stop at least this long may hide a catalyst change; until the change can be
+#: confirmed the cycle is reported as not yet established.
+LONG_STOP_HOURS = 72.0
+
+
+def long_restarts(tele: pd.DataFrame, min_hours: float = LONG_STOP_HOURS) -> list[pd.Timestamp]:
+    """Restarts that follow a stop of at least `min_hours` — observable when they happen."""
+    feed = tele[tag_id("F26")]
+    running_at = feed.index[(feed > RUNNING_MIN["F26"]).to_numpy()]
+    out = []
+    for restart in shutdown_ends(tele):
+        before = running_at[running_at < restart]
+        if len(before) and (restart - before[-1]) >= pd.Timedelta(hours=min_hours):
+            out.append(pd.Timestamp(restart))
+    return out
+
+
+def catalyst_changes(daily: pd.Series, restarts: pd.DatetimeIndex) -> list[pd.Timestamp]:
+    """Restarts after which the excess temperature falls by `CATALYST_CHANGE_FALL_C`.
+
+    Compares the last `CATALYST_WINDOW_DAYS` days of operation before the stop with the
+    first ones after, not a calendar window: a catalyst change is a long shutdown, and
+    a calendar window before the restart would hold almost no running days. A burst of
+    restarts during one start-up counts once.
+    """
+    found: list[pd.Timestamp] = []
+    for restart in restarts:
+        if found and restart - found[-1] < pd.Timedelta(days=CATALYST_WINDOW_DAYS):
+            continue
+        before = daily.loc[: restart - pd.Timedelta(seconds=1)].tail(CATALYST_WINDOW_DAYS)
+        after = daily.loc[restart:].head(CATALYST_WINDOW_DAYS)
+        if len(before) < 7 or len(after) < 7:
+            continue
+        if before.median() - after.median() >= CATALYST_CHANGE_FALL_C:
+            found.append(pd.Timestamp(restart))
+    return found
+
+
+def catalyst_status(
+    daily: pd.Series,
+    changes: list[pd.Timestamp],
+    t: pd.Timestamp,
+    eor_excess_c: float,
+    long_stops: list[pd.Timestamp] | None = None,
+) -> dict[str, object]:
+    """Where the catalyst is in its cycle as of `t`, from data available at `t` only.
+
+    Uses whole days before `t`. That a restart was a catalyst change is known only once
+    `CATALYST_WINDOW_DAYS` days after it have been seen — that is how it is detected —
+    so for that long after any long stop the cycle is reported as not yet established.
+    Which stops were changes is never read from the future.
+    """
+    t = pd.Timestamp(t)
+    known = daily.loc[: t.normalize() - pd.Timedelta(seconds=1)]
+    window = pd.Timedelta(days=CATALYST_WINDOW_DAYS)
+    confirmed = [c for c in changes if c + window <= t]
+    unsettled = [r for r in (long_stops or []) if r <= t < r + window]
+    out: dict[str, object] = {"eor_excess_c": round(float(eor_excess_c), 2)}
+    if unsettled:
+        out.update(state="start_up", restart=unsettled[-1].isoformat())
+        return out
+    start = confirmed[-1] if confirmed else known.index.min()
+    out["cycle_start"] = pd.Timestamp(start).isoformat()
+    out["days_in_cycle"] = int((t - pd.Timestamp(start)).days)
+    if confirmed:
+        # skip the start-of-run transient of a catalyst we saw being loaded
+        steady = known.loc[pd.Timestamp(start) + pd.Timedelta(days=CATALYST_MIN_DAYS):]
+    else:
+        steady = known.loc[start:]
+    if out["days_in_cycle"] < CATALYST_MIN_DAYS or len(steady) < CATALYST_MIN_DAYS // 3:
+        out["state"] = "too_short"
+        return out
+    recent_days = steady.tail(CATALYST_DRIFT_DAYS)
+    x = (recent_days.index - recent_days.index[0]).days.to_numpy(dtype=float)
+    slope, intercept = np.polyfit(x, recent_days.to_numpy(dtype=float), 1)
+    # Wear is estimated on the pessimistic side: the trend line is steady but misses the
+    # speed-up near the end of a run, the last fortnight is noisy but catches it. A warning
+    # that comes late is worse than one that comes early, so the older of the two counts.
+    trend = float(intercept + slope * x[-1])
+    recent = float(known.tail(14).median())
+    now = max(trend, recent)
+    slope = float(slope)
+    out.update(
+        excess_now_c=round(now, 2),
+        excess_trend_c=round(trend, 2),
+        excess_recent_c=round(recent, 2),
+        drift_c_per_month=round(slope * 30.0, 3),
+    )
+    if now >= eor_excess_c:
+        out.update(state="eor_reached", days_to_eor=0)
+    elif slope <= 0.0:
+        out.update(state="no_drift", days_to_eor=None)
+    else:
+        out.update(state="ageing", days_to_eor=int(round((eor_excess_c - now) / slope)))
+    return out

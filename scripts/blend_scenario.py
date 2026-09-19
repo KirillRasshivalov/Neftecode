@@ -62,6 +62,7 @@ def build(overrides: dict, season: str | None, stocks: dict[str, float]):
             quality_params,
             classifier_features=classifier.features if classifier else None,
             overrides=overrides,
+            reliability_reference=reference,
         ),
         artifacts_dir=rd.REPO_ROOT / "artifacts" / "scenario",
         whitelist=frozen_whitelist(reference),
