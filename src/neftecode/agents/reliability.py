@@ -108,16 +108,21 @@ class ReliabilityAgentBaseline:
             value = values.get(tag)
             if value is None:
                 continue
-            if value < bounds["p01"] or value > bounds["p99"]:
+            verdict = self._envelope(tag, value, state.controllable.get(tag), bounds)
+            if verdict is None:
+                continue
+            ok, text = verdict
+            factors.append(text)
+            if ok:
+                soft.append(f"не уводить {tag} дальше от рабочего диапазона")
+            else:
                 allowed = False
-                factors.append(
-                    f"{tag} = {value:.4g} вне рабочего диапазона обучающего периода "
-                    f"[{bounds['p01']:.4g}; {bounds['p99']:.4g}]."
-                )
 
         temperature, z = self._temperature(values, factors)
         throughput, feed_ratio = self._throughput(values, factors)
         step, max_steps = self._step(state, action)
+
+        catalyst = self._catalyst(state.data_flags.get("catalyst"), factors, soft)
 
         risk = self.W_TEMPERATURE * temperature + self.W_THROUGHPUT * throughput + self.W_STEP * step
         if temperature >= 0.5:
@@ -145,8 +150,72 @@ class ReliabilityAgentBaseline:
                 "feed_to_typical": None if feed_ratio is None else round(feed_ratio, 4),
                 "max_steps": round(max_steps, 4),
                 "running": state.data_flags.get("running"),
+                "catalyst": catalyst,
             },
         )
+
+    #: Below this many days to the end-of-run level the agent asks not to heat the reactor.
+    CATALYST_WARN_DAYS = 60
+
+    def _catalyst(self, cat: dict | None, factors: list[str], soft: list[str]) -> dict | None:
+        """Remaining catalyst life, as the state builder measured it.
+
+        Information and a soft constraint only; the severity index is unchanged. Its
+        temperature component already carries today's excess — this adds the trend and
+        how long until the level at which the plant changed the catalyst last time.
+        """
+        if not cat or cat.get("state") in (None, "start_up", "too_short"):
+            return cat
+        eor = cat.get("eor_excess_c")
+        if cat["state"] == "eor_reached":
+            factors.append(
+                f"Катализатор: {self.T5} выше нормы на {cat['excess_now_c']:+.1f} °C — это выше уровня "
+                f"{eor:+.1f} °C, при котором катализатор меняли в прошлом цикле."
+            )
+            soft.append(f"не повышать {self.T5}: ресурс катализатора исчерпан по опыту прошлого цикла")
+        elif cat["state"] == "ageing" and cat.get("days_to_eor") is not None:
+            if cat["days_to_eor"] <= self.CATALYST_WARN_DAYS:
+                factors.append(
+                    f"Катализатор: до уровня замены около {cat['days_to_eor']} дней "
+                    f"(дрейф {cat['drift_c_per_month']:+.2f} °C/мес)."
+                )
+                soft.append(f"не повышать {self.T5} без необходимости: ресурс катализатора на исходе")
+        return cat
+
+    def _envelope(
+        self, tag: str, value: float, current: float | None, bounds: dict
+    ) -> tuple[bool, str] | None:
+        """None inside the range; otherwise (still allowed?, what to tell the operator).
+
+        The range is p01-p99 of the training period — a model boundary, not an equipment
+        limit. Two cases are treated differently on purpose:
+
+        - a lever the action leaves alone is where the plant already runs. Sitting up to
+          one lever step past the boundary is allowed with a warning; declaring it not
+          allowed made the decision chatter hour by hour, forced move one hour and
+          refusal the next, whenever the unit ran at the edge of the range;
+        - a lever the action moves must land inside the range — the same rule the hard
+          whitelist check applies to changed setpoints, so the two never disagree.
+        """
+        lo, hi = float(bounds["p01"]), float(bounds["p99"])
+        outside = self._outside(value, lo, hi)
+        if outside == 0.0:
+            return None
+        where = f"[{lo:.4g}; {hi:.4g}]"
+        moved = current is not None and abs(float(value) - float(current)) > 1e-9
+        if moved:
+            return False, f"{tag} = {value:.4g}: шаг выводит рычаг за рабочий диапазон {where}."
+        tolerance = float(self.reference["steps"].get(tag, 0.0))
+        if outside <= tolerance:
+            return True, (
+                f"{tag} = {value:.4g} у границы рабочего диапазона {where} — "
+                f"в пределах допуска в один шаг."
+            )
+        return False, f"{tag} = {value:.4g} вне рабочего диапазона {where} больше чем на шаг рычага."
+
+    @staticmethod
+    def _outside(value: float, lo: float, hi: float) -> float:
+        return lo - value if value < lo else value - hi if value > hi else 0.0
 
     def _temperature(self, values: dict[str, float], factors: list[str]) -> tuple[float, float | None]:
         t5, f26 = values.get(self.T5), values.get(self.F26)
@@ -190,6 +259,7 @@ class ReliabilityAgentBaseline:
         return [
             "Тяжесть режима — прокси: в пакете нет данных об отказах, возрасте катализатора и температурах по слоям.",
             "Прокси дезактивации: насколько 242000:T5 выше медианы обучающего периода при том же 242000:F26.",
-            "Рабочий диапазон — p01–p99 обучающего периода на рабочих строках; модельная граница, не заводской лимит.",
+            "Рабочий диапазон — p01–p99 обучающего периода на рабочих строках; модельная граница, не заводской лимит. "
+            "Текущий режим допустим с запасом в один шаг рычага за границей; сдвинутый рычаг обязан оказаться внутри диапазона.",
             "Веса компонентов (0.5 / 0.3 / 0.2) и пороги классов выбраны, а не обучены.",
         ]

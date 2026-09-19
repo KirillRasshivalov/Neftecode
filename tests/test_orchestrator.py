@@ -1,4 +1,6 @@
 import copy
+
+import pytest
 import re
 from datetime import datetime
 
@@ -262,20 +264,46 @@ def test_with_a_blending_agent_the_card_carries_the_commercial_blend(tmp_path):
     assert "Товарная смесь" in rec.explanation
 
 
-def test_when_no_step_rescues_the_regime_the_tank_still_can(tmp_path):
-    # At 11.5 mg/kg no single lever step gets the hydrotreated diesel under 10, so the
-    # hydrotreating decision is a refusal. The commercial product can still be saved by
-    # diluting with low-sulfur kerosene, and the card says so.
+def test_the_tank_budget_turns_a_refusal_into_a_step_the_tank_can_finish(tmp_path):
+    # At 11.5 mg/kg no single step reaches 10, and without blending that is a refusal.
+    # The tank absorbs up to 11.43 (30 % kerosene at 5 mg/kg, 0.5 mg/kg margin), so a
+    # step to 10.5 is enough: the reactor moves once and the blend does the rest.
     rec = make_orchestrator(
         tmp_path, make_state(lab=9.0), LeverQuality(base=11.5), blending=make_blending()
     ).run_cycle(T)
-    assert outcome_of(rec) == "refuse"
+    assert outcome_of(rec) == "recommend"
+    assert rec.audit["sulfur_budget"]["limit_in_force_mg_kg"] == pytest.approx(11.429, abs=1e-3)
+    assert any("11.429" in label for label in rec.constraints_checked)
     blend = rec.expected_effect["blend"]
-    assert blend["diesel_sulfur_mg_kg"] == 11.5
-    assert blend["outcome"] == "blend"
-    assert blend["best"]["shares"]["kerosene"] > 0.0
     assert blend["best"]["properties"]["sulfur_mg_kg"] <= 10.0
-    assert "Товарная смесь" in rec.explanation
+
+
+def test_without_blending_the_same_regime_is_still_refused(tmp_path):
+    rec = make_orchestrator(tmp_path, make_state(lab=9.0), LeverQuality(base=11.5)).run_cycle(T)
+    assert outcome_of(rec) == "refuse"
+
+
+def test_diesel_above_ten_inside_the_budget_is_not_forced_to_move(tmp_path):
+    # Without the budget 10.4 fails the hard check and the orchestrator must move.
+    # With it the regime is admissible, and the card says the blend covers the gap.
+    rec = make_orchestrator(
+        tmp_path, make_state(lab=9.0), LeverQuality(base=10.4), blending=make_blending(), hold_margin=1000.0
+    ).run_cycle(T)
+    assert outcome_of(rec) == "hold"
+    assert "серного бюджета" in rec.explanation
+
+
+def test_an_on_spec_hold_reports_room_to_cool_the_reactor_as_information(tmp_path):
+    rec = make_orchestrator(
+        tmp_path, make_state(lab=8.0), LeverQuality(base=8.0), blending=make_blending()
+    ).run_cycle(T)
+    assert outcome_of(rec) == "hold"
+    assert rec.proposed_action is None                     # information, not an action
+    economy = rec.audit["economy"]
+    # 0.5 mg/kg per °C: 8.0 → 9.0 → 10.0 → 11.0 fits 11.43, 12.0 does not — three steps.
+    assert economy["to"] == pytest.approx(368.9 - 6.0)
+    assert economy["needs_blend"] is True
+    assert "не рекомендация" in rec.explanation
 
 
 def test_without_a_blending_agent_the_card_is_unchanged(tmp_path):

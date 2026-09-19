@@ -77,12 +77,15 @@ def load_blending(season: str | None = None, stocks: dict[str, float] | None = N
     config = yaml.safe_load((rd.REPO_ROOT / "configs" / "blending.yaml").read_text(encoding="utf-8"))
     for key, tonnes in (stocks or {}).items():
         config["components"][key]["stock_t"] = float(tonnes)
+    budget = config.get("budget") or {}
     return BlendingAgent(
         build_components(derived, config),
         build_spec(config, season),
         build_additives(config),
         config["batch_t"],
         config.get("grid_step_pct", 5),
+        budget_margin_mg_kg=budget.get("margin_mg_kg", 0.5),
+        max_dilution_share=budget.get("max_dilution_share", 0.3),
     )
 
 
@@ -105,6 +108,7 @@ class RealStateBuilder:
         quality_params: dict,
         classifier_features: list[str] | None = None,
         overrides: dict | None = None,
+        reliability_reference: dict | None = None,
     ) -> None:
         # Scenario inputs laid over the measured state, e.g. a feed sulfur the crude does
         # not really have. They are marked as such in `data_flags` so no card can pass a
@@ -130,6 +134,19 @@ class RealStateBuilder:
             self.labels[self.labels["running_at_sample"] == True]  # noqa: E712
             .sort_values("sampled_at", kind="stable").reset_index(drop=True)
         )
+
+        # Catalyst cycle, as of each decision: excess temperature history, the changes
+        # found in it and the long stops, precomputed once and cut at `t` in `build`.
+        self.catalyst = None
+        cat = (reliability_reference or {}).get("catalyst") or {}
+        if cat.get("eor_excess_c") is not None:
+            daily = rd.excess_t5_daily(self.tele, reliability_reference["t5_by_f26"])
+            self.catalyst = {
+                "daily": daily,
+                "changes": rd.catalyst_changes(daily, rd.shutdown_ends(self.tele)),
+                "long_stops": rd.long_restarts(self.tele),
+                "eor": float(cat["eor_excess_c"]),
+            }
 
         # Trailing window means, only when something asks for them: this is the stand-in
         # for the history window `ProcessState` does not carry yet (extension E4).
@@ -223,6 +240,10 @@ class RealStateBuilder:
                 "pak_sulfur": rd.pak_status(self.pak, t),
                 "feature_windows": self._feature_windows(t),
                 "feed_sulfur_pct": self._feed_sulfur(t),
+                "catalyst": None if self.catalyst is None else rd.catalyst_status(
+                    self.catalyst["daily"], self.catalyst["changes"], t,
+                    self.catalyst["eor"], self.catalyst["long_stops"],
+                ),
                 **self.overrides,
                 "scenario": scenario,
             },
@@ -269,6 +290,25 @@ def _interval(quality: dict | None) -> dict:
 
 RISK_LABELS = {"classifier": "классификатор", "interval": "оценка по интервалу"}
 COMPONENTS = {"hydrotreated_diesel": "ДТ", "kerosene": "керосин", "gas_oil": "газойль"}
+
+
+def catalyst_line(cat: dict) -> str:
+    state = cat.get("state")
+    eor = cat.get("eor_excess_c")
+    if state == "start_up":
+        return f"после длительного останова ({cat['restart'][:10]}) — цикл ещё не оценивается"
+    if state == "too_short":
+        return f"цикл с {cat['cycle_start'][:10]}: данных меньше месяца"
+    head = (
+        f"цикл с {cat['cycle_start'][:10]} ({cat['days_in_cycle']} дн), T5 выше нормы на "
+        f"{cat['excess_now_c']:+.1f} °C, дрейф {cat['drift_c_per_month']:+.2f} °C/мес"
+    )
+    if state == "eor_reached":
+        return head + f" — выше уровня, при котором катализатор меняли ({eor:+.1f} °C)"
+    if state == "no_drift":
+        return head + " — роста нет"
+    months = cat["days_to_eor"] / 30.0
+    return head + f" — до уровня замены ({eor:+.1f} °C) около {months:.1f} мес"
 
 
 def blend_line(blend: dict) -> str:
@@ -360,6 +400,23 @@ def full_card(rec: OperatorRecommendation) -> str:
     blend = rec.expected_effect.get("blend") or rec.audit.get("blend")
     if blend:
         lines.append("8 Смесь       " + blend_line(blend))
+    budget = rec.audit.get("sulfur_budget") or {}
+    if budget.get("budget_mg_kg") is not None:
+        via = " + ".join(f"{COMPONENTS.get(k, k)} {w:.0%}" for k, w in (budget.get("shares") or {}).items() if w > 0)
+        lines.append(
+            f"  Бюджет      резервуар доведёт до нормы ДТ с серой до {budget['limit_in_force_mg_kg']:.1f} мг/кг"
+            f" (смесь {via}, запас {budget['margin_mg_kg']:g} мг/кг)"
+        )
+    catalyst = (rec.audit.get("state", {}).get("data_flags") or {}).get("catalyst")
+    if catalyst:
+        lines.append("  Катализатор " + catalyst_line(catalyst))
+    economy = rec.audit.get("economy")
+    if economy:
+        lines.append(
+            f"  Экономия    {economy['lever']} можно снизить {fmt(economy['from'])} → {fmt(economy['to'])} °C: "
+            f"сера ДТ {economy['sulfur_mg_kg']:.1f} при лимите {economy['limit_mg_kg']:.1f}"
+            + (" (с разбавлением)" if economy.get("needs_blend") else "") + " — информация, не рекомендация"
+        )
     if decision:
         lines.append(f"  Решение     {decision.get('outcome')}: {decision.get('why')}")
     lines.append(f"  Вариантов   {rec.audit.get('n_candidates', '—')}, допустимых {rec.audit.get('n_feasible', '—')}")
@@ -412,7 +469,9 @@ def main(argv: list[str] | None = None) -> list[OperatorRecommendation]:
         quality_agent=QualityAgentBaseline(quality_params, classifier=classifier),
         reliability_agent=ReliabilityAgentBaseline(reference),
         state_builder=RealStateBuilder(
-            quality_params, classifier_features=classifier.features if classifier else None
+            quality_params,
+            classifier_features=classifier.features if classifier else None,
+            reliability_reference=reference,
         ),
         artifacts_dir=rd.REPO_ROOT / "artifacts" / "real",
         whitelist=frozen_whitelist(reference),
@@ -435,7 +494,12 @@ def main(argv: list[str] | None = None) -> list[OperatorRecommendation]:
         share = {k: f"{v / len(recs):.0%}" for k, v in counts.items()}
         print(f"  итог: {counts} — {share}")
         print()
-    shown = recs if args.all_cards else [next((r for r in recs if outcome(r) == "RECOMMEND"), recs[0])]
+    if args.all_cards:
+        shown = recs
+    else:
+        # The first action and the first refusal say more about a week than any one card.
+        firsts = [next((r for r in recs if outcome(r) == kind), None) for kind in ("RECOMMEND", "REFUSE")]
+        shown = [r for r in firsts if r is not None] or [recs[0]]
     for rec in shown:
         print(full_card(rec))
         print()

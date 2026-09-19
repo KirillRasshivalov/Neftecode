@@ -120,6 +120,22 @@ class BlendRecommendation(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
 
 
+class SulfurBudget(BaseModel):
+    """What the blending agent tells the hydrotreating side before it decides.
+
+    The largest sulfur in the hydrotreated diesel for which the tank can still be made
+    to specification — without additive, with no more than `max_dilution_share` of
+    diluent, and with `margin_mg_kg` of room under the tank's own limit. None when no
+    such blend exists at all.
+    """
+
+    budget_mg_kg: float | None
+    shares: dict[str, float] | None = None
+    margin_mg_kg: float
+    max_dilution_share: float
+    reason: str | None = None
+
+
 def build_components(derived: dict, config: dict) -> list[BlendComponent]:
     """Merge properties derived from the lab (`models/blend_components.json`) with
     what only the configuration knows: stocks, prices and the assumed sulfur."""
@@ -185,6 +201,8 @@ class BlendingAgent:
         additives: list[Additive],
         batch_t: float,
         grid_step_pct: int = 5,
+        budget_margin_mg_kg: float = 0.5,
+        max_dilution_share: float = 0.3,
     ) -> None:
         if not components:
             raise ValueError("blending needs at least one component")
@@ -195,6 +213,8 @@ class BlendingAgent:
         self.additives = additives
         self.batch_t = float(batch_t)
         self.units = 100 // grid_step_pct
+        self.budget_margin_mg_kg = float(budget_margin_mg_kg)
+        self.max_dilution_share = float(max_dilution_share)
 
     # ---------------------------------------------------------------- public
 
@@ -261,7 +281,70 @@ class BlendingAgent:
             **base,
         )
 
+    def sulfur_budget(self) -> SulfurBudget:
+        """How much sulfur the hydrotreated diesel may carry and the tank still meet spec.
+
+        Every blend on the grid that the stocks allow, that keeps at least
+        1 − `max_dilution_share` of the unit's own product and that passes density,
+        T95 and cetane **without** additive, tolerates diesel sulfur up to
+        (tank limit − margin − sulfur brought by the diluents) / diesel share. The
+        budget is the largest of those.
+
+        Why the two limits. Without the dilution cap the budget comes out of blends
+        that are mostly diluent — the arithmetic allows a hydrotreater at 16 mg/kg if
+        only 30 % of the tank is its product, but the unit makes diesel continuously and
+        cannot park the rest. Without the no-additive rule the budget would be bought
+        with an additive at a hundred times the price of the diesel.
+        """
+        by_key = {c.key: c for c in self.components}
+        ceiling = self.spec.sulfur_mg_kg_max - self.budget_margin_mg_kg
+        best: float | None = None
+        best_shares: dict[str, float] | None = None
+        for shares in self._within_stock(self.components):
+            own = shares.get(PRIMARY, 0.0)
+            if own <= 0.0 or own < 1.0 - self.max_dilution_share - 1e-9:
+                continue
+            props = self._mix(shares, by_key)
+            if not self._meets_all_but_sulfur(props):
+                continue
+            diluent = sum(w * by_key[k].sulfur_mg_kg for k, w in shares.items() if k != PRIMARY)
+            allowed = (ceiling - diluent) / own
+            if best is None or allowed > best + 1e-12:
+                best, best_shares = allowed, shares
+        common = dict(margin_mg_kg=self.budget_margin_mg_kg, max_dilution_share=self.max_dilution_share)
+        if best is None:
+            return SulfurBudget(
+                budget_mg_kg=None,
+                reason="ни одна смесь без присадки и с разрешённой долей разбавителя не проходит спецификацию",
+                **common,
+            )
+        return SulfurBudget(
+            budget_mg_kg=round(best, 3),
+            shares={k: round(w, 4) for k, w in best_shares.items()},
+            **common,
+        )
+
     # --------------------------------------------------------------- helpers
+
+    @staticmethod
+    def _mix(shares: dict[str, float], by_key: dict[str, BlendComponent]) -> dict[str, float]:
+        """Blend properties with no additive: sulfur by mass, the rest by volume."""
+        volume = sum(w / by_key[k].density_kg_m3 for k, w in shares.items())
+        vol_share = {k: (w / by_key[k].density_kg_m3) / volume for k, w in shares.items()}
+        return {
+            "sulfur_mg_kg": sum(w * by_key[k].sulfur_mg_kg for k, w in shares.items()),
+            "density_kg_m3": 1.0 / volume,
+            "t95_c": sum(v * by_key[k].t95_c for k, v in vol_share.items()),
+            "cetane": sum(v * by_key[k].cetane for k, v in vol_share.items()),
+        }
+
+    def _meets_all_but_sulfur(self, props: dict[str, float]) -> bool:
+        s = self.spec
+        return (
+            s.density_min <= props["density_kg_m3"] <= s.density_max
+            and props["t95_c"] <= s.t95_c_max
+            and props["cetane"] >= s.cetane_min
+        )
 
     def _with_diesel_sulfur(self, sulfur: float | None) -> list[BlendComponent]:
         if sulfur is None:
@@ -280,12 +363,9 @@ class BlendingAgent:
 
     def _evaluate(self, shares: dict[str, float], components: list[BlendComponent]) -> BlendCandidate:
         by_key = {c.key: c for c in components}
-        volume = sum(w / by_key[k].density_kg_m3 for k, w in shares.items())
-        density = 1.0 / volume
-        vol_share = {k: (w / by_key[k].density_kg_m3) / volume for k, w in shares.items()}
-        sulfur = sum(w * by_key[k].sulfur_mg_kg for k, w in shares.items())
-        t95 = sum(v * by_key[k].t95_c for k, v in vol_share.items())
-        cetane = sum(v * by_key[k].cetane for k, v in vol_share.items())
+        mixed = self._mix(shares, by_key)
+        sulfur, density = mixed["sulfur_mg_kg"], mixed["density_kg_m3"]
+        t95, cetane = mixed["t95_c"], mixed["cetane"]
 
         additive, dose = self._additive_for(self.spec.cetane_min - cetane)
         if additive is not None:
