@@ -24,9 +24,28 @@ htmlcov/
 *.iml
 .vscode/
 
-# Data & artifacts (keep folders via .gitkeep)
-data/*
-!data/.gitkeep
+# Data — the hackathon package, never committed. ~550 MB unpacked, and
+# avt_tags.csv alone (236 MB) is over GitHub's 100 MB per-file limit.
+# Everything under data/ is ignored at any depth; only .gitkeep files are
+# tracked, so the layout survives a fresh clone:
+#   data/raw/    the package as provided, original filenames
+#   data/cache/  parquet parsed from data/raw — regenerable
+data/**
+!data/**/
+!data/**/.gitkeep
+
+# Bulk data formats anywhere else — a safety net for misplaced copies.
+# Small hand-made test fixtures under tests/fixtures/ are allowed.
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.rar
+*.zip
+*.7z
+!tests/fixtures/**
+
+# Artifacts (keep folders via .gitkeep)
 artifacts/*
 !artifacts/.gitkeep
 models/*

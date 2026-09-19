@@ -4,7 +4,9 @@ from neftecode.orchestration.orchestrator import Orchestrator
 def test_orchestrator_normal_scenario_returns_recommendation():
     rec = Orchestrator().run_cycle(__import__("datetime").datetime(2024, 6, 1, 12, 0, 0), scenario="normal")
     assert rec.refuse is False
-    assert rec.proposed_action is not None
+    # Stable scaffold state with no trigger: the regime is held, so there is no action.
+    assert rec.audit["decision"]["outcome"] == "hold"
+    assert rec.proposed_action is None
     assert rec.explanation
 
 
