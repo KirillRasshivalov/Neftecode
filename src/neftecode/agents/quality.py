@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 from neftecode.domain.actions import ControlAction
-from neftecode.domain.agent_results import QualityAssessment
+from neftecode.domain.agent_results import MetricInterval, QualityAssessment
 from neftecode.domain.state import ProcessState
 
 
@@ -284,6 +284,9 @@ class QualityAgentBaseline:
                 "Вероятность нарушения: классификатор при исправном анализаторе, иначе оценка "
                 "по интервалу. Эффект действия в обоих случаях даёт физический слой, не модель.",
             ],
+            intervals={
+                self.METRIC: MetricInterval(mean=round(mean, 4), p05=round(p05, 4), p95=round(p95, 4)),
+            },
             details={
                 "model": "ewma_v0",
                 "intervals": {
@@ -329,7 +332,7 @@ class QualityAgentBaseline:
             return None, [], "установка не работает"
         if (state.data_flags.get("pak_sulfur") or {}).get("healthy") is not True:
             return None, [], "поточный анализатор неисправен или заморожен"
-        windows = state.data_flags.get("feature_windows")
+        windows = state.windows_for_agents()
         if not isinstance(windows, dict):
             return None, [], "в состоянии нет окон телеметрии"
         scored = self.classifier.evaluate(windows)

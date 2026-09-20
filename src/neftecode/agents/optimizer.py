@@ -60,7 +60,7 @@ class OptimizerAgent:
         for action in self._generate_candidates(state):
             quality = self.quality_agent.assess(state, action)
             reliability = self.reliability_agent.assess(state, action)
-            ok, reasons = self.constraints.check_action(state, action, quality, reliability)
+            verdict = self.constraints.check_action(state, action, quality, reliability)
             metrics = {
                 "quality_risk": quality.risk_of_spec_breach,
                 "equipment_risk": reliability.risk_index,
@@ -72,10 +72,11 @@ class OptimizerAgent:
                     action=action,
                     quality=quality,
                     reliability=reliability,
-                    feasible=ok,
-                    rejection_reasons=reasons,
-                    score=self._score(metrics) if ok else None,
+                    feasible=verdict.ok,
+                    rejection_reasons=verdict.reasons,
+                    score=self._score(metrics) if verdict.ok else None,
                     metrics=metrics,
+                    constraint_margins=verdict.margins,
                 )
             )
 

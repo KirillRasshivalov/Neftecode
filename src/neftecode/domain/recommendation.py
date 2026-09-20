@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -9,10 +9,14 @@ from neftecode.domain.actions import ControlAction
 from neftecode.domain.agent_results import ScoredScenario
 
 
+DecisionOutcome = Literal["recommend", "hold", "refuse"]
+
+
 class OperatorRecommendation(BaseModel):
     timestamp: datetime
     refuse: bool = False
     refuse_reason: str | None = None
+    outcome: DecisionOutcome | None = None
 
     problem_or_risk: str | None = None
     proposed_action: ControlAction | None = None

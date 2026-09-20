@@ -51,6 +51,8 @@ artifacts/*
 models/*
 !models/.gitkeep
 !models/README.md
+# Fitted JSON artefacts used at runtime
+!models/*.json
 
 # OS
 .DS_Store
@@ -58,6 +60,3 @@ Thumbs.db
 
 # Notebooks checkpoints
 .ipynb_checkpoints/
-
-# Markdown (kept locally, not tracked)
-*.md

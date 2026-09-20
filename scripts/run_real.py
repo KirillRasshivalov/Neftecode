@@ -228,6 +228,7 @@ class RealStateBuilder:
             kip=kip,
             quality=quality,
             controllable=controllable,
+            feature_windows=self._feature_windows(t),
             data_flags={
                 "scaffold_mode": False,
                 "source": "scripts.run_real bridge over data/cache",

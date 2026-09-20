@@ -30,5 +30,12 @@ class ProcessState(BaseModel):
     kip: dict[str, TagValue] = Field(default_factory=dict)
     quality: dict[str, QualityReading] = Field(default_factory=dict)
     controllable: dict[str, float] = Field(default_factory=dict)
+    feature_windows: dict[str, float | None] | None = None
     data_flags: dict[str, Any] = Field(default_factory=dict)
     notes: list[str] = Field(default_factory=list)
+
+    def windows_for_agents(self) -> dict[str, float | None] | None:
+        if self.feature_windows is not None:
+            return self.feature_windows
+        raw = self.data_flags.get("feature_windows")
+        return raw if isinstance(raw, dict) else None

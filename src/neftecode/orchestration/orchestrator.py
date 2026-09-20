@@ -139,14 +139,20 @@ class Orchestrator:
 
         if not gate.ok:
             msg = self._message("incomplete_data", "Надёжной рекомендации нет: входные данные неполны или несогласованы.")
-            if any("age" in r.lower() or "LIMS" in r or "PAK" in r for r in gate.reasons):
+            if any(
+                any(token in r for token in ("age", "LIMS", "ЛИМС", "PAK", "анализ", "анализатор"))
+                for r in gate.reasons
+            ):
                 msg = self._message("stale_lims", msg)
-            audit["gate"] = gate.reasons
+            audit["gate"] = {"reasons": gate.reasons, "warnings": gate.warnings}
             audit["decision"] = {"outcome": REFUSE, "why": "проверка данных не пройдена", "triggers": []}
             return self._refuse(
                 timestamp, state, f"{msg} Детали: {'; '.join(gate.reasons)}",
                 problem="; ".join(gate.reasons), confidence=0.0, audit=audit,
             )
+
+        if gate.warnings:
+            audit["gate"] = {"reasons": [], "warnings": gate.warnings}
 
         # The blending agent speaks first. How much sulfur the tank can take sets the
         # limit the hydrotreating regime is checked against — the organisers' 10 mg/kg
@@ -239,6 +245,7 @@ class Orchestrator:
         rec = OperatorRecommendation(
             timestamp=timestamp,
             refuse=False,
+            outcome=outcome,
             problem_or_risk=self._problem(triggers, baseline_q, baseline_r),
             proposed_action=chosen.action if outcome == RECOMMEND else None,
             expected_effect={
@@ -323,11 +330,11 @@ class Orchestrator:
         allowed"; the operator needs which lever, where it is and what the range is, and
         that is in the reliability agent's own risk factors.
         """
-        detail = [r for r in scenario.rejection_reasons if "reliability agent" not in r]
+        detail = [r for r in scenario.rejection_reasons if "агентом надёжности" not in r and "reliability agent" not in r]
         if not scenario.reliability.is_mode_allowed:
             detail = [
                 f for f in scenario.reliability.risk_factors
-                if "диапазон" in f or "Индекс тяжести" in f or "не работает" in f
+                if "диапазон" in f or "Индекс тяжести" in f or "не работает" in f or "Катализатор" in f
             ] + detail
         return detail or list(scenario.rejection_reasons)
 
@@ -455,6 +462,7 @@ class Orchestrator:
         rec = OperatorRecommendation(
             timestamp=timestamp,
             refuse=True,
+            outcome="refuse",
             refuse_reason=reason,
             problem_or_risk=problem,
             expected_effect={"blend": blend} if blend is not None else {},
