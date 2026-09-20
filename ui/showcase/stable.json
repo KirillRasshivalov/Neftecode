@@ -1,0 +1,130 @@
+{
+  "timestamp": "2026-01-27T16:00:00",
+  "refuse": false,
+  "refuse_reason": null,
+  "outcome": "hold",
+  "problem_or_risk": "признаков проблемы нет: прогноз серы 8.45 мг/кг, тяжесть режима low",
+  "proposed_action": null,
+  "expected_effect": {
+    "quality": {
+      "metrics": { "sulfur_mg_kg": 8.45 },
+      "risk_of_spec_breach": 0.12,
+      "confidence": 0.74,
+      "horizon_minutes": 180,
+      "features_used": ["lims:sulfur_mg_kg", "model:breach_classifier"],
+      "assumptions": [],
+      "intervals": {
+        "sulfur_mg_kg": { "mean": 8.45, "p05": 5.1, "p95": 10.95 }
+      },
+      "details": {
+        "risk_source": "classifier",
+        "intervals": {
+          "sulfur_mg_kg": { "mean": 8.45, "p05": 5.1, "p95": 10.95 }
+        },
+        "classifier_terms": [
+          { "feature": "T5_mean_2h", "contribution": -0.31 },
+          { "feature": "pak:sulfur_mean_2h", "contribution": 0.22 },
+          { "feature": "P13_mean_2h", "contribution": -0.11 }
+        ]
+      }
+    },
+    "reliability": {
+      "risk_index": 0.28,
+      "risk_class": "low",
+      "risk_factors": [],
+      "is_mode_allowed": true,
+      "soft_constraints": [],
+      "assumptions": []
+    },
+    "score": 18.4,
+    "hold_score": 18.4,
+    "blend": {
+      "outcome": "blend",
+      "best": {
+        "shares": {
+          "hydrotreated_diesel": 0.7,
+          "kerosene": 0.3,
+          "gas_oil": 0.0
+        },
+        "additive_kg_t": 0.0,
+        "additive": false,
+        "properties": {
+          "sulfur_mg_kg": 7.8,
+          "density_kg_m3": 831,
+          "t95_c": 338,
+          "cetane": 53.2
+        }
+      },
+      "binding": []
+    }
+  },
+  "constraints_checked": [
+    "sulfur_mg_kg <= 11.429 (по p95, иначе среднее)",
+    "controllable tags within configured ranges",
+    "reliability.is_mode_allowed",
+    "товарная смесь: сера ≤ 10; T95 ≤ 360; цетан ≥ 51; доли = 100%"
+  ],
+  "confidence": 0.74,
+  "explanation": "Режим не менять: признаков проблемы нет — режим в пределах ограничений. Последний анализ ЛИМС: 8.3 мг/кг, 6 ч назад. Прогноз серы 8.45 мг/кг, p95 10.95 мг/кг. Вероятность нарушения 12% (классификатор по поточному анализатору). Товарная смесь: очищенный ДТ 70%, керосин 30%; сера 7.8 мг/кг, плотность 831 кг/м³, T95 338 °C, цетановое число 53.2 — в спецификации. Лимит режима 11.43 мг/кг — бюджет от агента смеси. Режим гидроочистки проверяется по сере гидроочищенного ДТ; норма 10 мг/кг по ТЗ относится к товарной смеси и проверяется на ней. Качество и жёсткие ограничения имеют приоритет над экономическим эффектом.",
+  "alternatives": [],
+  "audit": {
+    "decision": {
+      "outcome": "hold",
+      "why": "признаков проблемы нет — режим в пределах ограничений, менять его незачем",
+      "triggers": []
+    },
+    "trigger_kinds": [],
+    "sulfur_budget": {
+      "budget_mg_kg": 11.429,
+      "shares": { "hydrotreated_diesel": 0.7, "kerosene": 0.3, "gas_oil": 0.0 },
+      "margin_mg_kg": 0.5,
+      "max_dilution_share": 0.3,
+      "reason": null,
+      "limit_in_force_mg_kg": 11.429
+    },
+    "economy": {
+      "lever": "242000:T5",
+      "from": 378.823,
+      "to": 372.823,
+      "delta": -6.0,
+      "sulfur_mg_kg": 10.948,
+      "limit_mg_kg": 11.429,
+      "needs_blend": true
+    },
+    "state": {
+      "timestamp": "2026-01-27T16:00:00",
+      "controllable": {
+        "242000:T5": 378.823,
+        "242000:F26": 218.4,
+        "242000:F2": 41200.0,
+        "242000:P13": 3.91
+      },
+      "kip": {
+        "242000:T5": { "tag": "242000:T5", "value": 378.823, "unit": "°C", "source": "242000_tags" },
+        "242000:F26": { "tag": "242000:F26", "value": 218.4, "unit": "м³/ч", "source": "242000_tags" },
+        "242000:F2": { "tag": "242000:F2", "value": 41200.0, "unit": "нм³/ч", "source": "242000_tags" },
+        "242000:P13": { "tag": "242000:P13", "value": 3.91, "unit": "МПа", "source": "242000_tags" }
+      },
+      "quality": {
+        "sulfur_mg_kg": {
+          "metric": "sulfur_mg_kg",
+          "value": 8.3,
+          "unit": "mg/kg",
+          "source": "lims",
+          "age_minutes": 360.0
+        }
+      },
+      "data_flags": {
+        "running": true,
+        "pak_sulfur": { "healthy": true, "frozen": false, "value": 8.41, "age_minutes": 10 },
+        "catalyst": {
+          "state": "ageing",
+          "days_in_cycle": 650,
+          "days_to_eor": 168,
+          "excess_now_c": 8.17,
+          "eor_excess_c": 13.56
+        }
+      }
+    }
+  }
+}

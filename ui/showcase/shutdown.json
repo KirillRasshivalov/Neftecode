@@ -1,0 +1,65 @@
+{
+  "timestamp": "2026-06-22T10:00:00",
+  "refuse": true,
+  "refuse_reason": "Надёжной рекомендации нет: установка не работает — расход сырья ниже рабочего порога, режимные изменения не рассматриваются. Детали: 242000:F26 = -0.14 (порог 50), 242000:T5 = 139.2 (порог 200)",
+  "outcome": "refuse",
+  "problem_or_risk": "установка не работает",
+  "proposed_action": null,
+  "expected_effect": {
+    "quality": {
+      "metrics": { "sulfur_mg_kg": null },
+      "risk_of_spec_breach": 0.0,
+      "confidence": 0.0,
+      "horizon_minutes": 180,
+      "features_used": [],
+      "assumptions": [],
+      "intervals": {},
+      "details": { "risk_source": "interval" }
+    },
+    "reliability": {
+      "risk_index": 0.0,
+      "risk_class": "unknown",
+      "risk_factors": ["Установка не работает — режимные рекомендации не рассматриваются."],
+      "is_mode_allowed": false,
+      "soft_constraints": [],
+      "assumptions": []
+    },
+    "blend": null
+  },
+  "constraints_checked": [
+    "sulfur_mg_kg <= 10.0 (по p95, иначе среднее)",
+    "controllable tags within configured ranges",
+    "reliability.is_mode_allowed"
+  ],
+  "confidence": 0.0,
+  "explanation": "Надёжной рекомендации нет: установка не работает — расход сырья ниже рабочего порога, режимные изменения не рассматриваются. Детали: 242000:F26 = -0.14 (порог 50), 242000:T5 = 139.2 (порог 200). Качество и жёсткие ограничения имеют приоритет над экономическим эффектом.",
+  "alternatives": [],
+  "audit": {
+    "decision": {
+      "outcome": "refuse",
+      "why": "установка не работает",
+      "triggers": []
+    },
+    "trigger_kinds": [],
+    "state": {
+      "timestamp": "2026-06-22T10:00:00",
+      "controllable": {
+        "242000:T5": 139.2,
+        "242000:F26": -0.14,
+        "242000:F2": 12.0,
+        "242000:P13": 0.2
+      },
+      "kip": {
+        "242000:T5": { "tag": "242000:T5", "value": 139.2, "unit": "°C", "source": "242000_tags" },
+        "242000:F26": { "tag": "242000:F26", "value": -0.14, "unit": "м³/ч", "source": "242000_tags" }
+      },
+      "quality": {},
+      "data_flags": {
+        "running": false,
+        "running_detail": "242000:F26 = -0.14 (порог 50), 242000:T5 = 139.2 (порог 200)",
+        "pak_sulfur": { "healthy": false, "frozen": true },
+        "catalyst": { "state": "too_short" }
+      }
+    }
+  }
+}

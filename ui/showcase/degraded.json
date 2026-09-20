@@ -1,0 +1,85 @@
+{
+  "timestamp": "2026-07-03T11:00:00",
+  "refuse": true,
+  "refuse_reason": "Надёжной рекомендации нет: последнее лабораторное значение устарело. Детали: анализ ЛИМС 348 ч назад при допустимых 30 ч; поточный анализатор недоступен или неисправен",
+  "outcome": "refuse",
+  "problem_or_risk": "анализ ЛИМС 348 ч назад при допустимых 30 ч; поточный анализатор недоступен или неисправен",
+  "proposed_action": null,
+  "expected_effect": {
+    "quality": {
+      "metrics": { "sulfur_mg_kg": 8.9 },
+      "risk_of_spec_breach": 0.22,
+      "confidence": 0.18,
+      "horizon_minutes": 180,
+      "features_used": ["lims:sulfur_mg_kg"],
+      "assumptions": [],
+      "intervals": {
+        "sulfur_mg_kg": { "mean": 8.9, "p05": 3.2, "p95": 14.1 }
+      },
+      "details": {
+        "risk_source": "interval",
+        "intervals": {
+          "sulfur_mg_kg": { "mean": 8.9, "p05": 3.2, "p95": 14.1 }
+        },
+        "caveats": ["Поточный анализатор серы неисправен или заморожен."]
+      }
+    },
+    "reliability": {
+      "risk_index": 0.33,
+      "risk_class": "low",
+      "risk_factors": [],
+      "is_mode_allowed": true,
+      "soft_constraints": [],
+      "assumptions": []
+    },
+    "blend": null
+  },
+  "constraints_checked": [
+    "sulfur_mg_kg <= 10.0 (по p95, иначе среднее)",
+    "controllable tags within configured ranges",
+    "reliability.is_mode_allowed"
+  ],
+  "confidence": 0.0,
+  "explanation": "Надёжной рекомендации нет: последнее лабораторное значение устарело. Детали: анализ ЛИМС 348 ч назад при допустимых 30 ч; поточный анализатор недоступен или неисправен. Установка работает, но без свежего ЛИМС и без исправного ПАК система сознательно отказывается от рискованного совета. Качество и жёсткие ограничения имеют приоритет над экономическим эффектом.",
+  "alternatives": [],
+  "audit": {
+    "decision": {
+      "outcome": "refuse",
+      "why": "проверка данных не пройдена",
+      "triggers": []
+    },
+    "trigger_kinds": [],
+    "gate": {
+      "reasons": [
+        "анализ ЛИМС 348 ч назад при допустимых 30 ч; поточный анализатор недоступен или неисправен"
+      ],
+      "warnings": []
+    },
+    "state": {
+      "timestamp": "2026-07-03T11:00:00",
+      "controllable": {
+        "242000:T5": 352.1,
+        "242000:F26": 205.0,
+        "242000:F2": 39800.0,
+        "242000:P13": 3.88
+      },
+      "kip": {
+        "242000:T5": { "tag": "242000:T5", "value": 352.1, "unit": "°C", "source": "242000_tags" }
+      },
+      "quality": {
+        "sulfur_mg_kg": {
+          "metric": "sulfur_mg_kg",
+          "value": 8.1,
+          "unit": "mg/kg",
+          "source": "lims",
+          "age_minutes": 20880.0
+        }
+      },
+      "data_flags": {
+        "running": true,
+        "pak_sulfur": { "healthy": false, "frozen": true, "value": 8.1, "age_minutes": 420 },
+        "catalyst": { "state": "start_up", "restart": "2026-06-30T14:30:00", "eor_excess_c": 13.56 }
+      }
+    }
+  }
+}
