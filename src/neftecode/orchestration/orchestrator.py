@@ -8,6 +8,7 @@ from typing import Any
 
 from neftecode.agents.base import QualityAgent, ReliabilityAgent
 from neftecode.agents.optimizer import OptimizerAgent
+from neftecode.agents.proxies import ProcessEconomics
 from neftecode.agents.quality import QualityAgentStub
 from neftecode.agents.reliability import ReliabilityAgentStub
 from neftecode.data.config import load_constraints, load_tags_whitelist, project_root
@@ -82,6 +83,7 @@ class Orchestrator:
         whitelist: dict[str, Any] | None = None,
         constraints_cfg: dict[str, Any] | None = None,
         blending_agent: Any | None = None,
+        economics: ProcessEconomics | None = None,
     ) -> None:
         self.quality_agent = quality_agent or QualityAgentStub()
         self.reliability_agent = reliability_agent or ReliabilityAgentStub()
@@ -92,12 +94,16 @@ class Orchestrator:
         self.whitelist = whitelist if whitelist is not None else load_tags_whitelist()
         self.gate = DataQualityGate(self.constraints_cfg)
         self.hard = HardConstraints(self.constraints_cfg, whitelist=self.whitelist)
+        # Output and specific energy for the ranking and for the card's expected effect.
+        # Without it both metrics stay at zero, as they were before the proxies existed.
+        self.economics = economics
         self.optimizer = OptimizerAgent(
             quality_agent=self.quality_agent,
             reliability_agent=self.reliability_agent,
             constraints=self.hard,
             whitelist=self.whitelist,
             ranking_cfg=self.constraints_cfg,
+            economics=self.economics,
         )
         decision = self.constraints_cfg.get("decision") or {}
         self.hold_margin = float(decision.get("hold_margin", DEFAULT_HOLD_MARGIN))
@@ -183,6 +189,18 @@ class Orchestrator:
             }
             feasible = kept
 
+        # And a quality complaint must not be answered by a step that makes quality
+        # worse, however well it scores on output. This is the task statement's key
+        # principle: an unacceptable regime may not be compensated with throughput.
+        if QUALITY_TRIGGERS.intersection(kinds):
+            kept = self._not_worse_on_quality(feasible, hold)
+            audit["quality_trigger_filter"] = {
+                "applied": True,
+                "dropped": len(feasible) - len(kept),
+                "hold_sulfur_mg_kg": None if hold is None else hold.quality.metrics.get("sulfur_mg_kg"),
+            }
+            feasible = kept
+
         if not feasible:
             msg = self._message("no_feasible", "Надёжной рекомендации нет: нет допустимых вариантов.")
             detail = "; ".join(self._rejection_detail(hold)[:3]) if hold else ""
@@ -231,6 +249,9 @@ class Orchestrator:
         economy = self._economy(state, limit) if outcome == HOLD and not triggers else None
         if economy is not None:
             audit["economy"] = economy
+        # Output and specific energy of the regime the operator is being asked to run
+        # (ТЗ §5, block 4). Computed on the chosen scenario, before the model copies it.
+        economics = self.economics.effect(state, chosen.action) if self.economics else None
         risk_threshold, risk_source = self._risk_threshold(hold) if hold else (self.act_risk, None)
         audit["decision"] = {
             "outcome": outcome,
@@ -254,6 +275,7 @@ class Orchestrator:
                 "score": chosen.score,
                 "hold_score": hold.score if hold_feasible else None,
                 "blend": blend,
+                "economics": economics,
             },
             constraints_checked=self._checked(blend, hard),
             confidence=chosen.quality.confidence,
@@ -262,7 +284,7 @@ class Orchestrator:
         )
         rec.explanation = build_explanation(
             state, chosen, refuse=False, refuse_reason=None,
-            outcome=outcome, why=why, triggers=triggers, hold=hold,
+            outcome=outcome, why=why, triggers=triggers, hold=hold, economics=economics,
         )
         if blend is not None:
             rec.explanation = f"{rec.explanation} {describe_blend(blend)}"
@@ -321,6 +343,28 @@ class Orchestrator:
             return feasible
         limit = hold.reliability.risk_index + 1e-9
         return [s for s in feasible if s.action.is_noop() or s.reliability.risk_index <= limit]
+
+    @staticmethod
+    def _not_worse_on_quality(
+        feasible: list[ScoredScenario], hold: ScoredScenario | None
+    ) -> list[ScoredScenario]:
+        """Keep holding, plus only the steps that do not raise predicted sulfur.
+
+        The hard filter already removed anything above the limit in force, so every
+        candidate here is *allowed*. This is the second, softer rule: while a quality
+        trigger is live, a step that trades sulfur for output is not a response to it,
+        even when the sulfur it adds still fits inside the budget.
+        """
+        if hold is None:
+            return feasible
+        current = hold.quality.metrics.get("sulfur_mg_kg")
+        if current is None:
+            return feasible
+        limit = float(current) + 1e-9
+        return [
+            s for s in feasible
+            if s.action.is_noop() or float(s.quality.metrics.get("sulfur_mg_kg", limit)) <= limit
+        ]
 
     @staticmethod
     def _rejection_detail(scenario: ScoredScenario) -> list[str]:
@@ -393,6 +437,7 @@ class Orchestrator:
             constraints=hard,
             whitelist=self.whitelist,
             ranking_cfg=cfg,
+            economics=self.economics,
         )
         return optimizer, hard
 

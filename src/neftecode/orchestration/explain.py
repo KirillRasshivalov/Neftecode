@@ -105,6 +105,28 @@ def describe_economy(economy: dict | None) -> str:
     return text + ". Это информация для технолога, а не рекомендация."
 
 
+def describe_economics(effect: dict | None, *, is_hold: bool) -> str:
+    """Output and specific energy, in operator language.
+
+    On a hold there is nothing to compare, so the current level is stated instead of a
+    change: the operator still needs to see what the regime costs.
+    """
+    if not effect:
+        return ""
+    out, energy = effect["output"], effect["energy"]
+    if is_hold:
+        return (
+            f"Выпуск {fmt(out['from'])} {out['unit']}, индекс удельной энергии "
+            f"{energy['from']:.2f} (1.0 — типичный режим обучающего периода)."
+        )
+    per_day = out["delta_t_day"]
+    return (
+        f"Выпуск {fmt(out['from'])} → {fmt(out['to'])} {out['unit']} "
+        f"({out['pct']:+.1f} %, {per_day:+.0f} т/сут), "
+        f"удельная энергия {energy['pct']:+.1f} % (индекс {energy['from']:.2f} → {energy['to']:.2f})."
+    )
+
+
 def describe_action(state: ProcessState, scenario: ScoredScenario) -> str:
     parts = []
     for tag, new in scenario.action.changes.items():
@@ -126,6 +148,7 @@ def build_explanation(
     why: str | None = None,
     triggers: list[str] | None = None,
     hold: ScoredScenario | None = None,
+    economics: dict | None = None,
 ) -> str:
     if refuse:
         return refuse_reason or "Рекомендация отклонена системой безопасности."
@@ -147,6 +170,7 @@ def build_explanation(
             f"Признаки проблемы: {'; '.join(triggers)}." if triggers else "",
             lab_text,
             f"Прогноз серы {fmt(after_mean)} мг/кг, p95 {fmt(after.get('p95'))} мг/кг.",
+            describe_economics(economics, is_hold=True),
             _risk(best),
         ]
     else:
@@ -161,6 +185,7 @@ def build_explanation(
                 f"p95 {fmt(before.get('p95'))} → {fmt(after.get('p95'))} мг/кг; "
                 f"тяжесть режима {best.reliability.risk_class} ({best.reliability.risk_index:.2f})."
             ),
+            describe_economics(economics, is_hold=False),
             _risk(best),
             f"Почему этот вариант: {why}." if why else "",
         ]

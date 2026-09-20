@@ -310,3 +310,90 @@ def test_without_a_blending_agent_the_card_is_unchanged(tmp_path):
     rec = make_orchestrator(tmp_path, make_state(lab=9.0), LeverQuality(base=9.0)).run_cycle(T)
     assert rec.expected_effect.get("blend") is None
     assert not any("товарная смесь" in label for label in rec.constraints_checked)
+
+
+# ------------------------------------------- quality may not be traded for output
+
+F26 = "242000:F26"
+#: A whitelist with a feed lever as well, so there is a candidate that buys output by
+#: giving up sulfur — the trade the task statement's key principle forbids.
+WHITELIST_WITH_FEED = {
+    "controllable_parameters": [
+        {"tag": T5, "range": {"min": 347.0, "max": 388.0, "assumption": True}, "deltas": [-2.0, 0.0, 2.0]},
+        {"tag": F26, "range": {"min": 200.0, "max": 300.0, "assumption": True}, "deltas": [-5.0, 0.0, 5.0]},
+    ]
+}
+
+
+class FeedQuality(LeverQuality):
+    """Sulfur falls with T5 and rises with feed, both well inside the limit."""
+
+    def assess(self, state, action=None):
+        changes = {} if action is None else action.changes
+        d_t5 = changes.get(T5, state.controllable[T5]) - state.controllable[T5]
+        d_feed = changes.get(F26, state.controllable[F26]) - state.controllable[F26]
+        sulfur = self.base - self.sensitivity * d_t5 + 0.05 * d_feed
+        return QualityAssessment(
+            metrics={"sulfur_mg_kg": sulfur},
+            risk_of_spec_breach=max(0.0, min(1.0, (sulfur - 8.0) / 4.0)),
+            confidence=0.7,
+        )
+
+
+def feed_orchestrator(tmp_path, lab, economics):
+    state = make_state(lab=lab).model_copy(update={"controllable": {T5: 368.9, F26: 255.0}})
+    cfg = copy.deepcopy(load_constraints())
+    return Orchestrator(
+        quality_agent=FeedQuality(base=9.0),
+        reliability_agent=FlatReliability(),
+        state_builder=FixedBuilder(state),
+        artifacts_dir=tmp_path,
+        whitelist=WHITELIST_WITH_FEED,
+        constraints_cfg=cfg,
+        blending_agent=None,
+        economics=economics,
+    )
+
+
+@pytest.fixture
+def economics():
+    from neftecode.agents.proxies import ProcessEconomics
+
+    return ProcessEconomics.from_reference({
+        "temperature_tag": T5, "feed_tag": F26, "gas_tag": "242000:F2", "pressure_tag": "242000:P13",
+        "t5_median_c": 368.9, "gas_term_median": 1442.0, "heat_reference_c": 300.0,
+        "w_heat": 0.7, "w_compression": 0.3, "density_t_m3": 0.85,
+    })
+
+
+def test_an_off_spec_lab_is_not_answered_by_raising_output(tmp_path, economics):
+    rec = feed_orchestrator(tmp_path, lab=11.0, economics=economics).run_cycle(T)
+    assert "lab_off_spec" in rec.audit["trigger_kinds"]
+    assert rec.audit["quality_trigger_filter"]["dropped"] > 0
+    if rec.proposed_action is not None:
+        assert F26 not in rec.proposed_action.changes or rec.proposed_action.changes[F26] <= 255.0
+
+
+def test_without_a_quality_trigger_output_may_be_weighed_freely(tmp_path, economics):
+    rec = feed_orchestrator(tmp_path, lab=8.0, economics=economics).run_cycle(T)
+    assert rec.audit["trigger_kinds"] == []
+    assert "quality_trigger_filter" not in rec.audit
+    assert outcome_of(rec) == "hold"
+
+
+def test_the_card_states_the_effect_on_output_and_energy(tmp_path, economics):
+    # The state has no gas or pressure reading, so the proxy must stay silent rather
+    # than invent one; with them it fills the block.
+    rec = feed_orchestrator(tmp_path, lab=8.0, economics=economics).run_cycle(T)
+    assert rec.expected_effect["economics"] is None
+
+    state = make_state(lab=8.0).model_copy(update={
+        "controllable": {T5: 368.9, F26: 255.0, "242000:F2": 93500.0, "242000:P13": 3.94}
+    })
+    orch = feed_orchestrator(tmp_path, lab=8.0, economics=economics)
+    orch.state_builder = FixedBuilder(state)
+    rec = orch.run_cycle(T)
+    effect = rec.expected_effect["economics"]
+    assert effect["output"]["from"] == pytest.approx(255.0)
+    assert effect["energy"]["from"] == pytest.approx(1.0, abs=0.05)
+    assert "Выпуск" in rec.explanation and "удельной энергии" in rec.explanation

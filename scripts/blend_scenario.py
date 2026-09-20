@@ -38,7 +38,6 @@ from scripts.run_real import (
     load_model_file,
     one_line,
     outcome,
-    use_utf8_stdout,
 )
 
 
@@ -77,7 +76,7 @@ def sulfur_of(quality: dict | None) -> float | None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    use_utf8_stdout()
+    rd.use_utf8_stdout()
     parser = argparse.ArgumentParser(prog="blend_scenario", description=__doc__.splitlines()[0])
     parser.add_argument("--at", required=True, help="ISO timestamp of the decision")
     parser.add_argument("--feed-sulfur", type=float, help="scenario sulfur in the hydrotreater feed, %% mass")

@@ -1,0 +1,33 @@
+{
+  "model": "ewma_v0",
+  "fitted_on": "train: sampled_at <= 2025-09-12T14:30:00, running, non-outlier",
+  "alpha": 0.1,
+  "alpha_grid_train_mae": {
+    "0.02": 1.5477,
+    "0.05": 1.5342,
+    "0.1": 1.527,
+    "0.2": 1.542,
+    "0.3": 1.5712,
+    "0.5": 1.6403
+  },
+  "resid_q05": -3.4721,
+  "resid_q50": -0.0798,
+  "resid_q95": 3.095,
+  "ref_gap_hours": 24.0,
+  "sulfur_median_train": 8.5,
+  "lims_delay_hours": 4.0,
+  "heldout_eval": {
+    "n_results": 395,
+    "mae_ewma": 1.4642,
+    "mae_train_median": 1.5177,
+    "r2_ewma": 0.01,
+    "r2_train_median": -0.0007,
+    "interval_coverage_p05_p95": 0.9038,
+    "share_above_spec": 0.1671,
+    "share_p95_below_spec": 0.0557,
+    "p95_range": [
+      8.369,
+      13.02
+    ]
+  }
+}

@@ -9,6 +9,7 @@ Reads only the parquet cache in `data/cache/`, never `data/raw/`.
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -480,3 +481,11 @@ def catalyst_status(
     else:
         out.update(state="ageing", days_to_eor=int(round((eor_excess_c - now) / slope)))
     return out
+
+
+def use_utf8_stdout() -> None:
+    """Output carries box rules, arrows and units; a Windows console defaults to cp1251."""
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):  # pragma: no cover - platform dependent
+        pass
