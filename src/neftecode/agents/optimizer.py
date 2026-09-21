@@ -7,11 +7,13 @@ from neftecode.agents.base import QualityAgent, ReliabilityAgent
 from neftecode.data.config import load_constraints, load_tags_whitelist
 from neftecode.domain.actions import ControlAction
 from neftecode.domain.agent_results import ScoredScenario
+from neftecode.agents.proxies import NEUTRAL_METRICS, ProcessEconomics
 from neftecode.domain.state import ProcessState
 from neftecode.safety.constraints import HardConstraints
 
 #: Metrics where a larger value is better. The score is lower-is-better, so these
-#: are subtracted; everything else (risks, energy) is added.
+#: are subtracted; everything else (risks, energy) is added. Both economic metrics are
+#: percentage changes against the current regime (`agents/proxies.py`).
 _BENEFIT_METRICS = frozenset({"throughput"})
 
 #: How many levers one recommendation may move, unless configured.
@@ -40,11 +42,15 @@ class OptimizerAgent:
         whitelist: dict[str, Any] | None = None,
         ranking_cfg: dict[str, Any] | None = None,
         max_levers_per_action: int | None = None,
+        economics: ProcessEconomics | None = None,
     ) -> None:
         self.quality_agent = quality_agent
         self.reliability_agent = reliability_agent
         self.constraints = constraints or HardConstraints(load_constraints())
         self.whitelist = whitelist or load_tags_whitelist()
+        # Without it the two economic metrics stay at zero and the ranking is quality
+        # and equipment risk only, which is how the stub scenarios run.
+        self.economics = economics
         cfg = ranking_cfg if ranking_cfg is not None else load_constraints()
         self.weights = cfg.get("ranking_weights", {})
         configured = (cfg.get("decision") or {}).get("max_levers_per_action")
@@ -64,8 +70,7 @@ class OptimizerAgent:
             metrics = {
                 "quality_risk": quality.risk_of_spec_breach,
                 "equipment_risk": reliability.risk_index,
-                "throughput": 0.0,
-                "energy_or_cost_proxy": 0.0,
+                **(self.economics.metrics(state, action) if self.economics else NEUTRAL_METRICS),
             }
             scored.append(
                 ScoredScenario(

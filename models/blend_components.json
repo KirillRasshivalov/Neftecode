@@ -1,0 +1,95 @@
+{
+  "implausible_values_dropped": {
+    "D15": 1,
+    "50%.T": 5,
+    "95%.T": 47,
+    "CetaneNumber": 0
+  },
+  "hydrotreating_shift": {
+    "density_kg_m3": -11.25,
+    "t50_c": -5.0,
+    "t95_c": -6.0
+  },
+  "hydrotreating_shift_note": "продукт минус сырьё на гидроочистке (т.о. 2 минус т.о. 1), медианы",
+  "cetane_index_d976_validation": {
+    "n_pairs": 37,
+    "bias": -1.136,
+    "mae": 1.71,
+    "max_abs_error": 5.417,
+    "measured_median": 53.8,
+    "computed_median": 53.31
+  },
+  "cetane_index_of_diesel_median": 53.36,
+  "components": {
+    "hydrotreated_diesel": {
+      "label": "Очищенный дизель (гидроочистка, т.о. 2)",
+      "properties": {
+        "density_kg_m3": 836.1,
+        "t95_c": 347.0,
+        "sulfur_mg_kg": 8.6,
+        "cetane": 53.75
+      },
+      "n": {
+        "density_kg_m3": 1015,
+        "t50_c": 1251,
+        "t95_c": 1292,
+        "sulfur_mg_kg": 1462,
+        "cetane": 42
+      },
+      "sources": {
+        "density_kg_m3": "lims: Гидроочистка т.о. 2, D15",
+        "t95_c": "lims: Гидроочистка т.о. 2, 95%.T",
+        "sulfur_mg_kg": "lims: Гидроочистка т.о. 2, Mg.Sulfur",
+        "cetane": "lims: Гидроочистка т.о. 2, CetaneNumber"
+      }
+    },
+    "kerosene": {
+      "label": "Керосин (прокси: АВТ т.о. 2, гидроочищенный)",
+      "properties": {
+        "density_kg_m3": 821.45,
+        "t95_c": 290.0,
+        "cetane": 52.13
+      },
+      "straight_run": {
+        "density_kg_m3": 832.7,
+        "t50_c": 251.5,
+        "t95_c": 296.0
+      },
+      "n": {
+        "density_kg_m3": 120,
+        "t50_c": 212,
+        "t95_c": 188
+      },
+      "sources": {
+        "density_kg_m3": "lims: АВТ т.о. 2, D15 + сдвиг гидроочистки",
+        "t95_c": "lims: АВТ т.о. 2, 95%.T + сдвиг гидроочистки",
+        "cetane": "ASTM D976 по плотности и T50, формула проверена на гидроочищенном дизеле",
+        "sulfur_mg_kg": "допущение, configs/blending.yaml"
+      }
+    },
+    "gas_oil": {
+      "label": "Газойль (прокси: АВТ т.о. 1, гидроочищенный)",
+      "properties": {
+        "density_kg_m3": 870.55,
+        "t95_c": 349.0,
+        "cetane": 48.51
+      },
+      "straight_run": {
+        "density_kg_m3": 881.8,
+        "t50_c": 317.0,
+        "t95_c": 355.0
+      },
+      "n": {
+        "density_kg_m3": 219,
+        "t50_c": 647,
+        "t95_c": 634
+      },
+      "sources": {
+        "density_kg_m3": "lims: АВТ т.о. 1, D15 + сдвиг гидроочистки",
+        "t95_c": "lims: АВТ т.о. 1, 95%.T + сдвиг гидроочистки",
+        "cetane": "ASTM D976 по плотности и T50, формула проверена на гидроочищенном дизеле",
+        "sulfur_mg_kg": "допущение, configs/blending.yaml"
+      }
+    }
+  }
+}

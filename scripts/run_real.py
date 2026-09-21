@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
+import pathlib
+import time
 from datetime import datetime
 
 import pandas as pd
@@ -29,6 +30,7 @@ import yaml
 
 from neftecode.agents import BreachClassifier, QualityAgentBaseline, ReliabilityAgentBaseline
 from neftecode.agents.blending import BlendingAgent, build_additives, build_components, build_spec
+from neftecode.agents.proxies import ProcessEconomics
 from neftecode.data.config import load_constraints
 from neftecode.domain.recommendation import OperatorRecommendation
 from neftecode.domain.state import ProcessState, QualityReading, TagValue
@@ -36,6 +38,10 @@ from neftecode.orchestration.explain import fmt
 from neftecode.orchestration.orchestrator import Orchestrator
 from scripts import realdata as rd
 from scripts.analysis.quality_baseline_fit import ewma_after, usable_labels
+
+#: Seconds of real time between decisions in `--follow`. Small enough to watch a day go
+#: by in a demo, large enough to read each card.
+DEFAULT_TICK_SECONDS = 2.0
 
 #: Recommendation cadence. The organisers ask for a step of 15 to 60 minutes; telemetry
 #: is on a 10-minute grid, so any multiple of 10 works. At 60 minutes a demo week is 168
@@ -87,6 +93,19 @@ def load_blending(season: str | None = None, stocks: dict[str, float] | None = N
         budget_margin_mg_kg=budget.get("margin_mg_kg", 0.5),
         max_dilution_share=budget.get("max_dilution_share", 0.3),
     )
+
+
+def load_economics() -> ProcessEconomics | None:
+    """Output and energy proxies, if the reference was fitted.
+
+    Optional like the classifier: without the file the ranking is quality and equipment
+    risk only, and the card has no effect on output or energy.
+    """
+    path = rd.MODELS_DIR / "economics_reference.json"
+    if not path.exists():
+        print("models/economics_reference.json нет — выпуск и энергия в оценке не участвуют")
+        return None
+    return ProcessEconomics.from_reference(json.loads(path.read_text(encoding="utf-8")))
 
 
 def load_model_file(name: str) -> dict:
@@ -395,6 +414,14 @@ def full_card(rec: OperatorRecommendation) -> str:
             f"({_risk_label(quality)}) · "
             f"тяжесть {reliability.get('risk_class', '?')} ({reliability.get('risk_index', 0.0):.2f})"
         )
+        econ = rec.expected_effect.get("economics")
+        if econ:
+            out, energy = econ["output"], econ["energy"]
+            lines.append(
+                f"              выпуск {fmt(out['from'])} → {fmt(out['to'])} {out['unit']} "
+                f"({out['pct']:+.1f} %, {out['delta_t_day']:+.0f} т/сут) · "
+                f"удельная энергия {energy['pct']:+.1f} % (индекс {energy['from']:.2f} → {energy['to']:.2f})"
+            )
     lines.append("5 Проверки    " + "; ".join(rec.constraints_checked))
     lines.append("6 Уверенность " + (f"{rec.confidence:.2f}" if rec.confidence is not None else "—"))
     lines.append(f"7 Почему      {rec.explanation}")
@@ -430,6 +457,19 @@ def decision_times(week: str, every_minutes: int = DEFAULT_EVERY_MINUTES) -> lis
     return [start + step * i for i in range(int(pd.Timedelta(days=7) / step))]
 
 
+def forward_times(at: str, every_minutes: int = DEFAULT_EVERY_MINUTES) -> list[pd.Timestamp]:
+    """Decision times from `at` to the end of the data, at the given cadence.
+
+    Without `--follow` only the first is used. With it, this is the list a long-lived
+    process would work through as new rows arrive.
+    """
+    start = pd.Timestamp(at)
+    step = pd.Timedelta(minutes=every_minutes)
+    last = pd.Timestamp(rd.load_telemetry().index.max())
+    count = max(1, int((last - start) / step) + 1)
+    return [start + step * i for i in range(count)]
+
+
 def transitions(recs: list[OperatorRecommendation]) -> list[OperatorRecommendation]:
     """Only the decisions that differ from the one before, so a week stays readable."""
     out, previous = [], None
@@ -441,16 +481,63 @@ def transitions(recs: list[OperatorRecommendation]) -> list[OperatorRecommendati
     return out
 
 
-def use_utf8_stdout() -> None:
-    """The card draws box rules and arrows; a Windows console defaults to cp1251."""
+def follow(
+    orchestrator: Orchestrator,
+    times: list[pd.Timestamp],
+    *,
+    tick_seconds: float,
+    scenario: str | None,
+    all_cards: bool,
+) -> list[OperatorRecommendation]:
+    """The decision loop as it would run in production: one decision per interval.
+
+    The same orchestrator, the same as-of state builder and the same trace files as a
+    batch run — only the timing differs. Time here advances through the data instead of
+    with the wall clock, because the package ends on 2026-08-07 and waiting for the next
+    real ten-minute row would mean waiting forever; everything else is what a long-lived
+    process would do. `tick_seconds` is how long the loop pauses between decisions, so a
+    week can be watched in a minute.
+
+    The point it demonstrates is that the state builder is created once and reused: the
+    per-decision cost is milliseconds, against a cadence of 15 to 60 minutes.
+    """
+    recs: list[OperatorRecommendation] = []
+    previous: tuple | None = None
+    print(
+        f"Живой цикл: решение каждые {tick_seconds:g} с реального времени, "
+        f"шаг модельного времени — как в --every. Ctrl+C останавливает."
+    )
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
-    except (AttributeError, OSError):  # pragma: no cover - platform dependent
-        pass
+        for timestamp in times:
+            started = time.perf_counter()
+            rec = orchestrator.run_cycle(timestamp.to_pydatetime(), scenario=scenario)
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            recs.append(rec)
+            key = (outcome(rec), tuple(sorted(_moved(rec))))
+            changed = key != previous
+            previous = key
+            if all_cards or changed:
+                print()
+                print(full_card(rec) if all_cards else "  " + one_line(rec))
+                print(f"  цикл {elapsed_ms:.0f} мс · трасса {rd.rel(trace_path(orchestrator, rec))}")
+            else:
+                print(".", end="", flush=True)
+            if tick_seconds > 0 and timestamp is not times[-1]:
+                time.sleep(tick_seconds)
+    except KeyboardInterrupt:
+        print("\nостановлено оператором")
+    print()
+    print(f"решений {len(recs)}, трассы в {rd.rel(orchestrator.artifacts_dir)}")
+    return recs
+
+
+def trace_path(orchestrator: Orchestrator, rec: OperatorRecommendation) -> pathlib.Path:
+    """Where the orchestrator wrote this decision. Same naming as `_persist`."""
+    return orchestrator.artifacts_dir / f"recommendation_{rec.timestamp:%Y%m%dT%H%M%S}.json"
 
 
 def main(argv: list[str] | None = None) -> list[OperatorRecommendation]:
-    use_utf8_stdout()
+    rd.use_utf8_stdout()
     parser = argparse.ArgumentParser(prog="run_real", description=__doc__.splitlines()[0])
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--week", choices=sorted(rd.DEMO_WEEKS), help="frozen demo week")
@@ -460,12 +547,22 @@ def main(argv: list[str] | None = None) -> list[OperatorRecommendation]:
         help=f"minutes between decisions in a week (default {DEFAULT_EVERY_MINUTES})",
     )
     parser.add_argument("--all-cards", action="store_true", help="print the full card for every decision")
+    parser.add_argument(
+        "--follow", action="store_true",
+        help="run as a loop: one decision per tick, printing each as it is made",
+    )
+    parser.add_argument(
+        "--tick", type=float, default=DEFAULT_TICK_SECONDS,
+        help=f"seconds of real time between decisions with --follow (default {DEFAULT_TICK_SECONDS:g})",
+    )
+    parser.add_argument("--limit", type=int, help="stop after this many decisions")
     args = parser.parse_args(argv)
 
     quality_params = load_model_file("quality_baseline.json")
     reference = load_model_file("reliability_reference.json")
     classifier = load_classifier()
     blending = load_blending()
+    economics = load_economics()
     orchestrator = Orchestrator(
         quality_agent=QualityAgentBaseline(quality_params, classifier=classifier),
         reliability_agent=ReliabilityAgentBaseline(reference),
@@ -478,9 +575,22 @@ def main(argv: list[str] | None = None) -> list[OperatorRecommendation]:
         whitelist=frozen_whitelist(reference),
         constraints_cfg=load_constraints(),
         blending_agent=blending,
+        economics=economics,
     )
 
-    times = decision_times(args.week, args.every) if args.week else [pd.Timestamp(args.at)]
+    if args.week:
+        times = decision_times(args.week, args.every)
+    elif args.follow:
+        times = forward_times(args.at, args.every)
+    else:
+        times = [pd.Timestamp(args.at)]
+    if args.limit:
+        times = times[: args.limit]
+    if args.follow:
+        return follow(
+            orchestrator, times,
+            tick_seconds=args.tick, scenario=args.week, all_cards=args.all_cards,
+        )
     recs = [orchestrator.run_cycle(t.to_pydatetime(), scenario=args.week) for t in times]
 
     if args.week:

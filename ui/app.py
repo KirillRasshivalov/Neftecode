@@ -207,6 +207,40 @@ def render_action(rec: dict[str, Any]) -> None:
     )
 
 
+def render_economics(rec: dict[str, Any]) -> None:
+    """Block 4 of the card: effect on output and on the energy proxy (ТЗ §5).
+
+    Both come from `expected_effect.economics`; the field is absent on a refusal and on
+    a stopped unit, and then the block stays hidden rather than showing zeros.
+    """
+    econ = (rec.get("expected_effect") or {}).get("economics")
+    if not econ:
+        return
+    out, energy = econ.get("output") or {}, econ.get("energy") or {}
+    left, right = st.columns(2)
+    with left:
+        st.markdown('<div class="nc-agent"><div class="nc-agent-name">Выпуск</div>', unsafe_allow_html=True)
+        st.write(
+            f"**{fmt_num(out.get('from'), 1)} → {fmt_num(out.get('to'), 1)} {out.get('unit', '')}** "
+            f"({out.get('pct', 0):+.1f} %)"
+        )
+        st.caption(f"{out.get('delta_t_day', 0):+.0f} т/сут · тег {out.get('tag', '—')}")
+        st.markdown("</div>", unsafe_allow_html=True)
+    with right:
+        st.markdown(
+            '<div class="nc-agent"><div class="nc-agent-name">Удельная энергия</div>', unsafe_allow_html=True
+        )
+        st.write(
+            f"**{energy.get('pct', 0):+.1f} %** · индекс "
+            f"{fmt_num(energy.get('from'), 2)} → {fmt_num(energy.get('to'), 2)}"
+        )
+        st.caption(
+            "1.0 — типичный режим обучающего периода. Прокси без валюты: "
+            "экономических данных в пакете нет."
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
+
+
 def render_agents(rec: dict[str, Any]) -> None:
     st.markdown('<div class="nc-section-title">Мультиагентный разбор</div>', unsafe_allow_html=True)
     q = (rec.get("expected_effect") or {}).get("quality") or {}
@@ -321,6 +355,7 @@ def render_card(rec: dict[str, Any], *, title: str) -> None:
     pipeline(rec)
     metric_chips(rec)
     render_action(rec)
+    render_economics(rec)
     render_agents(rec)
     render_constraints_and_explain(rec)
     with st.expander("Полный JSON трассы (для проверки жюри)"):

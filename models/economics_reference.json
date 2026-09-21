@@ -1,0 +1,38 @@
+{
+  "fitted_on": "train: date <= 2025-09-12T14:30:00, clean operating rows",
+  "n_rows": 136586,
+  "units": "energy index is dimensionless, 1.0 at the median training regime",
+  "temperature_tag": "242000:T5",
+  "feed_tag": "242000:F26",
+  "gas_tag": "242000:F2",
+  "pressure_tag": "242000:P13",
+  "t5_median_c": 368.916,
+  "gas_term_median": 1442.275306,
+  "f26_median_m3_h": 255.3714,
+  "heat_reference_c": 300.0,
+  "w_heat": 0.7,
+  "w_compression": 0.3,
+  "density_t_m3": 0.85,
+  "heat_reference_sensitivity": [
+    {
+      "heat_reference_c": 250.0,
+      "energy_pct_per_t5_step": 1.177,
+      "energy_pct_per_f26_step": -0.864
+    },
+    {
+      "heat_reference_c": 275.0,
+      "energy_pct_per_t5_step": 1.491,
+      "energy_pct_per_f26_step": -0.864
+    },
+    {
+      "heat_reference_c": 300.0,
+      "energy_pct_per_t5_step": 2.031,
+      "energy_pct_per_f26_step": -0.864
+    },
+    {
+      "heat_reference_c": 325.0,
+      "energy_pct_per_t5_step": 3.188,
+      "energy_pct_per_f26_step": -0.864
+    }
+  ]
+}

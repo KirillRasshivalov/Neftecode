@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime
 
 from dateutil.parser import isoparse
@@ -34,6 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    # Output is Russian and carries arrows; a Windows console defaults to cp1251 and the
+    # first print raises UnicodeEncodeError before anything is shown.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):  # pragma: no cover - platform dependent
+        pass
     parser = build_parser()
     args = parser.parse_args(argv)
 

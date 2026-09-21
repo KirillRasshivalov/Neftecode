@@ -1,145 +1,955 @@
 {
-  "timestamp": "2026-07-12T14:00:00",
+  "timestamp": "2026-07-18T16:00:00",
   "refuse": false,
   "refuse_reason": null,
   "outcome": "recommend",
-  "problem_or_risk": "последний анализ ЛИМС вне спецификации: 11.6 > 10 мг/кг; вероятность нарушения спецификации 58% (порог 25%, классификатор по поточному анализатору)",
+  "problem_or_risk": "последний анализ ЛИМС вне спецификации: 12.4 > 10 мг/кг",
   "proposed_action": {
-    "changes": { "242000:T5": 381.4 },
+    "changes": {
+      "242000:T5": 370.8198852539063
+    },
     "label": "delta:242000:T5+2"
   },
   "expected_effect": {
     "quality": {
-      "metrics": { "sulfur_mg_kg": 9.72 },
-      "risk_of_spec_breach": 0.31,
-      "confidence": 0.68,
+      "metrics": {
+        "sulfur_mg_kg": 8.081
+      },
+      "risk_of_spec_breach": 0.0144,
+      "confidence": 0.7385,
       "horizon_minutes": 180,
-      "features_used": ["lims:sulfur_mg_kg", "242000:T5", "model:breach_classifier"],
-      "assumptions": [],
+      "features_used": [
+        "lims:sulfur_mg_kg",
+        "242000:T5",
+        "model:breach_classifier"
+      ],
+      "assumptions": [
+        "Базовая модель: экспоненциальное сглаживание результатов ЛИМС, доступных на момент решения (задержка 4 ч).",
+        "Интервал p05–p95 — квантили ошибки этого прогноза на обучающем периоде; расширяется с возрастом последнего анализа.",
+        "Влияние рычагов мультипликативное: знаки по физике процесса, величины — допущения.",
+        "Сера оценивается в гидроочищенном ДТ, а не в товарном.",
+        "Вероятность нарушения: классификатор при исправном анализаторе, иначе оценка по интервалу. Эффект действия в обоих случаях даёт физический слой, не модель."
+      ],
       "intervals": {
-        "sulfur_mg_kg": { "mean": 9.72, "p05": 6.4, "p95": 11.08 }
+        "sulfur_mg_kg": {
+          "mean": 8.081,
+          "p05": 4.6089,
+          "p95": 11.176
+        }
       },
       "details": {
-        "risk_source": "classifier",
+        "model": "ewma_v0",
         "intervals": {
-          "sulfur_mg_kg": { "mean": 9.72, "p05": 6.4, "p95": 11.08 }
+          "sulfur_mg_kg": {
+            "mean": 8.081,
+            "p05": 4.6089,
+            "p95": 11.176
+          }
         },
+        "lab_value": 12.399999618530273,
+        "ewma": 8.7747,
+        "alpha": 0.1,
+        "lab_age_hours": 6.0,
+        "level": 8.7747,
+        "feed_factor": 1.0,
+        "feed_sulfur_pct": 0.8988,
+        "feed_sulfur_pct_scenario": null,
+        "what_if_shift": -0.6937,
+        "deltas": {
+          "242000:T5": 2.0
+        },
+        "risk_source": "classifier",
+        "risk_interval": 0.2112,
+        "risk_interval_hold": 0.3062,
+        "risk_classifier_hold": 0.1094,
+        "risk_horizon_minutes": 120,
+        "interval_horizon_minutes": 1440,
         "classifier_terms": [
-          { "feature": "pak:sulfur_mean_2h", "contribution": 0.41 },
-          { "feature": "T5_mean_2h", "contribution": -0.27 },
-          { "feature": "lab_ewma", "contribution": 0.18 }
+          {
+            "feature": "242000:F17|2h",
+            "value": 285.8732,
+            "contribution": 0.584
+          },
+          {
+            "feature": "pak:sulfur|2h",
+            "value": 7.9147,
+            "contribution": -0.3987
+          },
+          {
+            "feature": "lab_hours_since_above",
+            "value": 6.0,
+            "contribution": 0.3432
+          }
+        ],
+        "classifier_unavailable": null,
+        "classifier_auc_heldout": 0.724,
+        "caveats": [
+          "Последний результат ЛИМС 12.4 мг/кг, 6 ч назад.",
+          "Вероятность нарушения 11% — классификатор по поточному анализатору и телеметрии; это оценка на сейчас, не прогноз."
         ]
       }
     },
     "reliability": {
-      "risk_index": 0.46,
-      "risk_class": "medium",
-      "risk_factors": ["Температура выше типичной для текущей загрузки"],
+      "risk_index": 0.2785,
+      "risk_class": "low",
+      "risk_factors": [
+        "242000:F26 на 11 % выше типичного расхода сырья."
+      ],
       "is_mode_allowed": true,
-      "soft_constraints": ["не повышать 242000:T5 без нужды"],
-      "assumptions": []
+      "soft_constraints": [
+        "не повышать 242000:F26"
+      ],
+      "assumptions": [
+        "Тяжесть режима — прокси: в пакете нет данных об отказах, возрасте катализатора и температурах по слоям.",
+        "Прокси дезактивации: насколько 242000:T5 выше медианы обучающего периода при том же 242000:F26.",
+        "Рабочий диапазон — p01–p99 обучающего периода на рабочих строках; модельная граница, не заводской лимит. Текущий режим допустим с запасом в один шаг рычага за границей; сдвинутый рычаг обязан оказаться внутри диапазона.",
+        "Веса компонентов (0.5 / 0.3 / 0.2) и пороги классов выбраны, а не обучены."
+      ],
+      "details": {
+        "components": {
+          "temperature": 0.0206,
+          "throughput": 0.5608,
+          "step": 0.5
+        },
+        "t5_z": 0.062,
+        "feed_to_typical": 1.1122,
+        "max_steps": 1.0,
+        "running": true,
+        "catalyst": {
+          "eor_excess_c": 13.56,
+          "state": "start_up",
+          "restart": "2026-06-30T14:30:00"
+        }
+      }
     },
-    "score": 41.2,
-    "hold_score": 62.8,
+    "score": 8.07069298644007,
+    "hold_score": 14.303999999999998,
     "blend": {
       "outcome": "blend",
+      "diesel_sulfur_mg_kg": 8.081,
       "best": {
         "shares": {
-          "hydrotreated_diesel": 0.85,
-          "kerosene": 0.15,
+          "hydrotreated_diesel": 1.0,
+          "kerosene": 0.0,
           "gas_oil": 0.0
         },
+        "tonnes": {
+          "hydrotreated_diesel": 1000.0,
+          "kerosene": 0.0,
+          "gas_oil": 0.0
+        },
+        "additive": null,
         "additive_kg_t": 0.0,
-        "additive": false,
         "properties": {
-          "sulfur_mg_kg": 9.1,
-          "density_kg_m3": 834,
-          "t95_c": 344,
-          "cetane": 52.8
-        }
+          "sulfur_mg_kg": 8.081,
+          "density_kg_m3": 836.1,
+          "t95_c": 347.0,
+          "cetane": 53.75
+        },
+        "margins": {
+          "sulfur_mg_kg": 1.919,
+          "density_kg_m3": 8.9,
+          "t95_c": 13.0,
+          "cetane": 2.75
+        },
+        "cost_rel_per_t": 1.0,
+        "feasible": true,
+        "violations": []
       },
-      "binding": ["сера"]
+      "alternatives": [
+        {
+          "shares": {
+            "hydrotreated_diesel": 0.95,
+            "kerosene": 0.05,
+            "gas_oil": 0.0
+          },
+          "tonnes": {
+            "hydrotreated_diesel": 950.0,
+            "kerosene": 50.0,
+            "gas_oil": 0.0
+          },
+          "additive": null,
+          "additive_kg_t": 0.0,
+          "properties": {
+            "sulfur_mg_kg": 7.927,
+            "density_kg_m3": 835.355,
+            "t95_c": 344.102,
+            "cetane": 53.668
+          },
+          "margins": {
+            "sulfur_mg_kg": 2.073,
+            "density_kg_m3": 9.645,
+            "t95_c": 15.898,
+            "cetane": 2.668
+          },
+          "cost_rel_per_t": 1.0,
+          "feasible": true,
+          "violations": []
+        },
+        {
+          "shares": {
+            "hydrotreated_diesel": 0.95,
+            "kerosene": 0.0,
+            "gas_oil": 0.05
+          },
+          "tonnes": {
+            "hydrotreated_diesel": 950.0,
+            "kerosene": 0.0,
+            "gas_oil": 50.0
+          },
+          "additive": null,
+          "additive_kg_t": 0.0,
+          "properties": {
+            "sulfur_mg_kg": 8.077,
+            "density_kg_m3": 837.758,
+            "t95_c": 347.096,
+            "cetane": 53.498
+          },
+          "margins": {
+            "sulfur_mg_kg": 1.923,
+            "density_kg_m3": 7.242,
+            "t95_c": 12.904,
+            "cetane": 2.498
+          },
+          "cost_rel_per_t": 1.0,
+          "feasible": true,
+          "violations": []
+        }
+      ],
+      "closest_infeasible": null,
+      "binding": [],
+      "refuse_reason": null,
+      "n_candidates": 63,
+      "n_feasible": 51,
+      "spec": {
+        "season": "summer",
+        "sulfur_mg_kg_max": 10.0,
+        "t95_c_max": 360.0,
+        "cetane_min": 51.0,
+        "density_min": 820.0,
+        "density_max": 845.0
+      },
+      "assumptions": [
+        "Смешение: сера — линейно по массе, плотность — по объёму (точно); T95 и цетановое число — линейно по объёму (допущение: на НПЗ смешивают по индексам).",
+        "Гидроочищенный компонент идёт в смесь со средним прогнозом серы режима: резервуар усредняет многие часы производства.",
+        "Цены компонентов равны: ценовых данных в пакете нет. Экономику задаёт присадка — в 100 раз дороже тонны ДТ.",
+        "Отклик присадки насыщается: +G·(1 − exp(−доза/d0)). Величины G и d0 — допущения."
+      ]
+    },
+    "economics": {
+      "output": {
+        "tag": "242000:F26",
+        "unit": "м³/ч",
+        "from": 284.01,
+        "to": 284.01,
+        "pct": 0.0,
+        "delta_t_day": 0.0
+      },
+      "energy": {
+        "unit": "индекс, 1.0 = типичный режим обучающего периода",
+        "from": 0.9576,
+        "to": 0.9779,
+        "pct": 2.121,
+        "heater_delta": 0.0203,
+        "compressor_delta": 0.0
+      }
     }
   },
   "constraints_checked": [
-    "sulfur_mg_kg <= 11.429 (по p95, иначе среднее)",
+    "sulfur_mg_kg <= 12.143 (по p95, иначе среднее)",
     "controllable tags within configured ranges",
+    "blend shares sum == 1.0 (when blend tags present)",
     "reliability.is_mode_allowed",
-    "товарная смесь: сера ≤ 10; T95 ≤ 360; цетан ≥ 51; доли = 100%"
+    "товарная смесь: сера ≤ 10 мг/кг",
+    "товарная смесь: T95 ≤ 360 °C",
+    "товарная смесь: цетановое число ≥ 51 (лето)",
+    "товарная смесь: плотность 820–845 кг/м³ (лето)",
+    "товарная смесь: доли в сумме 100 %, в пределах запасов"
   ],
-  "confidence": 0.68,
-  "explanation": "Рекомендуем изменить режим: текущий режим не проходит ограничения / есть риск по качеству, выбран лучший допустимый шаг. Действие: 242000:T5 379.4 → 381.4 °C. Прогноз серы 11.40 → 9.72 мг/кг, p95 12.8 → 11.08 мг/кг; вероятность нарушения 58% → 31%. Товарная смесь: очищенный ДТ 85%, керосин 15%; сера 9.1 мг/кг — в спецификации. Ограничивает: сера. Режим гидроочистки проверяется по сере гидроочищенного ДТ; норма 10 мг/кг относится к товарной смеси. Качество и жёсткие ограничения имеют приоритет над экономическим эффектом.",
+  "confidence": 0.7385,
+  "explanation": "Рекомендация: 242000:T5: 368.8 → 370.8 °C. Причина: последний анализ ЛИМС вне спецификации: 12.4 > 10 мг/кг. Последний анализ ЛИМС: 12.4 мг/кг, 6 ч назад. Ожидаемый эффект: прогноз серы 8.77 → 8.08 мг/кг, p95 11.87 → 11.18 мг/кг; тяжесть режима low (0.28). Выпуск 284.0 → 284.0 м³/ч (+0.0 %, +0 т/сут), удельная энергия +2.1 % (индекс 0.96 → 0.98). Вероятность нарушения 1% (классификатор по поточному анализатору). Почему этот вариант: лучший из 5 допустимых вариантов улучшает оценку на 6.2 (порог 5). Режим гидроочистки проверяется по сере гидроочищенного ДТ; норма 10 мг/кг по ТЗ относится к товарной смеси и проверяется на ней. Качество и жёсткие ограничения имеют приоритет над экономическим эффектом. Товарная смесь: очищенный ДТ 100%; сера 8.1 мг/кг, плотность 836 кг/м³, T95 347 °C, цетановое число 53.8 — в спецификации. Серный бюджет резервуара: гидроочищенный ДТ до 12.1 мг/кг.",
   "alternatives": [
     {
-      "action": { "changes": { "242000:P13": 3.96 }, "label": "delta:242000:P13+0.05" },
+      "action": {
+        "changes": {
+          "242000:F26": 279.0139465332031
+        },
+        "label": "delta:242000:F26-5"
+      },
       "quality": {
-        "metrics": { "sulfur_mg_kg": 10.95 },
-        "risk_of_spec_breach": 0.49,
-        "confidence": 0.66,
-        "intervals": { "sulfur_mg_kg": { "mean": 10.95, "p05": 7.5, "p95": 12.3 } },
-        "details": { "risk_source": "classifier" }
+        "metrics": {
+          "sulfur_mg_kg": 8.3802
+        },
+        "risk_of_spec_breach": 0.0554,
+        "confidence": 0.7385,
+        "horizon_minutes": 180,
+        "features_used": [
+          "lims:sulfur_mg_kg",
+          "242000:F26",
+          "model:breach_classifier"
+        ],
+        "assumptions": [
+          "Базовая модель: экспоненциальное сглаживание результатов ЛИМС, доступных на момент решения (задержка 4 ч).",
+          "Интервал p05–p95 — квантили ошибки этого прогноза на обучающем периоде; расширяется с возрастом последнего анализа.",
+          "Влияние рычагов мультипликативное: знаки по физике процесса, величины — допущения.",
+          "Сера оценивается в гидроочищенном ДТ, а не в товарном.",
+          "Вероятность нарушения: классификатор при исправном анализаторе, иначе оценка по интервалу. Эффект действия в обоих случаях даёт физический слой, не модель."
+        ],
+        "intervals": {
+          "sulfur_mg_kg": {
+            "mean": 8.3802,
+            "p05": 4.9081,
+            "p95": 11.4752
+          }
+        },
+        "details": {
+          "model": "ewma_v0",
+          "intervals": {
+            "sulfur_mg_kg": {
+              "mean": 8.3802,
+              "p05": 4.9081,
+              "p95": 11.4752
+            }
+          },
+          "lab_value": 12.399999618530273,
+          "ewma": 8.7747,
+          "alpha": 0.1,
+          "lab_age_hours": 6.0,
+          "level": 8.7747,
+          "feed_factor": 1.0,
+          "feed_sulfur_pct": 0.8988,
+          "feed_sulfur_pct_scenario": null,
+          "what_if_shift": -0.3945,
+          "deltas": {
+            "242000:F26": -5.0
+          },
+          "risk_source": "classifier",
+          "risk_interval": 0.2522,
+          "risk_interval_hold": 0.3062,
+          "risk_classifier_hold": 0.1094,
+          "risk_horizon_minutes": 120,
+          "interval_horizon_minutes": 1440,
+          "classifier_terms": [
+            {
+              "feature": "242000:F17|2h",
+              "value": 285.8732,
+              "contribution": 0.584
+            },
+            {
+              "feature": "pak:sulfur|2h",
+              "value": 7.9147,
+              "contribution": -0.3987
+            },
+            {
+              "feature": "lab_hours_since_above",
+              "value": 6.0,
+              "contribution": 0.3432
+            }
+          ],
+          "classifier_unavailable": null,
+          "classifier_auc_heldout": 0.724,
+          "caveats": [
+            "Последний результат ЛИМС 12.4 мг/кг, 6 ч назад.",
+            "Вероятность нарушения 11% — классификатор по поточному анализатору и телеметрии; это оценка на сейчас, не прогноз."
+          ]
+        }
       },
       "reliability": {
-        "risk_index": 0.42,
-        "risk_class": "medium",
+        "risk_index": 0.2389,
+        "risk_class": "low",
         "risk_factors": [],
         "is_mode_allowed": true,
         "soft_constraints": [],
-        "assumptions": []
+        "assumptions": [
+          "Тяжесть режима — прокси: в пакете нет данных об отказах, возрасте катализатора и температурах по слоям.",
+          "Прокси дезактивации: насколько 242000:T5 выше медианы обучающего периода при том же 242000:F26.",
+          "Рабочий диапазон — p01–p99 обучающего периода на рабочих строках; модельная граница, не заводской лимит. Текущий режим допустим с запасом в один шаг рычага за границей; сдвинутый рычаг обязан оказаться внутри диапазона.",
+          "Веса компонентов (0.5 / 0.3 / 0.2) и пороги классов выбраны, а не обучены."
+        ],
+        "details": {
+          "components": {
+            "temperature": 0.0,
+            "throughput": 0.4629,
+            "step": 0.5
+          },
+          "t5_z": -0.402,
+          "feed_to_typical": 1.0926,
+          "max_steps": 1.0,
+          "running": true,
+          "catalyst": {
+            "eor_excess_c": 13.56,
+            "state": "start_up",
+            "restart": "2026-06-30T14:30:00"
+          }
+        }
       },
       "feasible": true,
       "rejection_reasons": [],
-      "score": 54.1,
-      "metrics": {}
+      "score": 12.320429262991102,
+      "metrics": {
+        "quality_risk": 0.0554,
+        "equipment_risk": 0.2389,
+        "throughput": -1.760476927641108,
+        "energy_or_cost_proxy": 0.4839046706999861
+      },
+      "constraint_margins": {
+        "sulfur_mg_kg": 0.6678
+      }
+    },
+    {
+      "action": {
+        "changes": {},
+        "label": "noop"
+      },
+      "quality": {
+        "metrics": {
+          "sulfur_mg_kg": 8.7747
+        },
+        "risk_of_spec_breach": 0.1094,
+        "confidence": 0.7385,
+        "horizon_minutes": 180,
+        "features_used": [
+          "lims:sulfur_mg_kg",
+          "model:breach_classifier"
+        ],
+        "assumptions": [
+          "Базовая модель: экспоненциальное сглаживание результатов ЛИМС, доступных на момент решения (задержка 4 ч).",
+          "Интервал p05–p95 — квантили ошибки этого прогноза на обучающем периоде; расширяется с возрастом последнего анализа.",
+          "Влияние рычагов мультипликативное: знаки по физике процесса, величины — допущения.",
+          "Сера оценивается в гидроочищенном ДТ, а не в товарном.",
+          "Вероятность нарушения: классификатор при исправном анализаторе, иначе оценка по интервалу. Эффект действия в обоих случаях даёт физический слой, не модель."
+        ],
+        "intervals": {
+          "sulfur_mg_kg": {
+            "mean": 8.7747,
+            "p05": 5.3026,
+            "p95": 11.8697
+          }
+        },
+        "details": {
+          "model": "ewma_v0",
+          "intervals": {
+            "sulfur_mg_kg": {
+              "mean": 8.7747,
+              "p05": 5.3026,
+              "p95": 11.8697
+            }
+          },
+          "lab_value": 12.399999618530273,
+          "ewma": 8.7747,
+          "alpha": 0.1,
+          "lab_age_hours": 6.0,
+          "level": 8.7747,
+          "feed_factor": 1.0,
+          "feed_sulfur_pct": 0.8988,
+          "feed_sulfur_pct_scenario": null,
+          "what_if_shift": 0.0,
+          "deltas": {},
+          "risk_source": "classifier",
+          "risk_interval": 0.3062,
+          "risk_interval_hold": 0.3062,
+          "risk_classifier_hold": 0.1094,
+          "risk_horizon_minutes": 120,
+          "interval_horizon_minutes": 1440,
+          "classifier_terms": [
+            {
+              "feature": "242000:F17|2h",
+              "value": 285.8732,
+              "contribution": 0.584
+            },
+            {
+              "feature": "pak:sulfur|2h",
+              "value": 7.9147,
+              "contribution": -0.3987
+            },
+            {
+              "feature": "lab_hours_since_above",
+              "value": 6.0,
+              "contribution": 0.3432
+            }
+          ],
+          "classifier_unavailable": null,
+          "classifier_auc_heldout": 0.724,
+          "caveats": [
+            "Последний результат ЛИМС 12.4 мг/кг, 6 ч назад.",
+            "Вероятность нарушения 11% — классификатор по поточному анализатору и телеметрии; это оценка на сейчас, не прогноз."
+          ]
+        }
+      },
+      "reliability": {
+        "risk_index": 0.1682,
+        "risk_class": "low",
+        "risk_factors": [
+          "242000:F26 на 11 % выше типичного расхода сырья."
+        ],
+        "is_mode_allowed": true,
+        "soft_constraints": [
+          "не повышать 242000:F26"
+        ],
+        "assumptions": [
+          "Тяжесть режима — прокси: в пакете нет данных об отказах, возрасте катализатора и температурах по слоям.",
+          "Прокси дезактивации: насколько 242000:T5 выше медианы обучающего периода при том же 242000:F26.",
+          "Рабочий диапазон — p01–p99 обучающего периода на рабочих строках; модельная граница, не заводской лимит. Текущий режим допустим с запасом в один шаг рычага за границей; сдвинутый рычаг обязан оказаться внутри диапазона.",
+          "Веса компонентов (0.5 / 0.3 / 0.2) и пороги классов выбраны, а не обучены."
+        ],
+        "details": {
+          "components": {
+            "temperature": 0.0,
+            "throughput": 0.5608,
+            "step": 0.0
+          },
+          "t5_z": -0.213,
+          "feed_to_typical": 1.1122,
+          "max_steps": 0.0,
+          "running": true,
+          "catalyst": {
+            "eor_excess_c": 13.56,
+            "state": "start_up",
+            "restart": "2026-06-30T14:30:00"
+          }
+        }
+      },
+      "feasible": true,
+      "rejection_reasons": [],
+      "score": 14.303999999999998,
+      "metrics": {
+        "quality_risk": 0.1094,
+        "equipment_risk": 0.1682,
+        "throughput": 0.0,
+        "energy_or_cost_proxy": 0.0
+      },
+      "constraint_margins": {
+        "sulfur_mg_kg": 0.2733
+      }
     }
   ],
   "audit": {
-    "decision": {
-      "outcome": "recommend",
-      "why": "есть признак проблемы, лучший шаг заметно лучше удержания",
-      "triggers": ["lab_off_spec", "breach_risk"]
-    },
-    "trigger_kinds": ["lab_off_spec", "breach_risk"],
-    "sulfur_budget": {
-      "budget_mg_kg": 11.429,
-      "limit_in_force_mg_kg": 11.429,
-      "shares": { "hydrotreated_diesel": 0.7, "kerosene": 0.3, "gas_oil": 0.0 },
-      "margin_mg_kg": 0.5,
-      "reason": null
-    },
     "state": {
-      "timestamp": "2026-07-12T14:00:00",
-      "controllable": {
-        "242000:T5": 379.4,
-        "242000:F26": 214.1,
-        "242000:F2": 40500.0,
-        "242000:P13": 3.91
-      },
+      "timestamp": "2026-07-18T16:00:00",
       "kip": {
-        "242000:T5": { "tag": "242000:T5", "value": 379.4, "unit": "°C", "source": "242000_tags" },
-        "242000:F26": { "tag": "242000:F26", "value": 214.1, "unit": "м³/ч", "source": "242000_tags" },
-        "242000:F2": { "tag": "242000:F2", "value": 40500.0, "unit": "нм³/ч", "source": "242000_tags" },
-        "242000:P13": { "tag": "242000:P13", "value": 3.91, "unit": "МПа", "source": "242000_tags" }
+        "242000:T5": {
+          "tag": "242000:T5",
+          "value": 368.8198852539063,
+          "unit": "°C",
+          "source": "242000_tags"
+        },
+        "242000:F26": {
+          "tag": "242000:F26",
+          "value": 284.0139465332031,
+          "unit": "м³/ч",
+          "source": "242000_tags"
+        },
+        "242000:F2": {
+          "tag": "242000:F2",
+          "value": 89393.1640625,
+          "unit": "нм³/ч",
+          "source": "242000_tags"
+        },
+        "242000:P13": {
+          "tag": "242000:P13",
+          "value": 3.949719667434693,
+          "unit": "МПа",
+          "source": "242000_tags"
+        }
       },
       "quality": {
         "sulfur_mg_kg": {
           "metric": "sulfur_mg_kg",
-          "value": 11.6,
+          "value": 12.399999618530273,
           "unit": "mg/kg",
           "source": "lims",
-          "age_minutes": 420.0
+          "measured_at": "2026-07-18T10:00:00",
+          "age_minutes": 360.0
         }
       },
+      "controllable": {
+        "242000:T5": 368.8198852539063,
+        "242000:F26": 284.0139465332031,
+        "242000:F2": 89393.1640625,
+        "242000:P13": 3.949719667434693
+      },
+      "feature_windows": {
+        "242000:T5|2h": 369.773674,
+        "242000:T5|6h": 371.224717,
+        "242000:T5|24h": 373.509879,
+        "242000:F26|2h": 283.765444,
+        "242000:F26|6h": 280.408991,
+        "242000:F26|24h": 277.598663,
+        "242000:F2|2h": 89210.154297,
+        "242000:F2|6h": 88907.319444,
+        "242000:F2|24h": 89574.756348,
+        "242000:P13|2h": 3.970257,
+        "242000:P13|6h": 3.999201,
+        "242000:P13|24h": 3.981304,
+        "242000:F1|2h": 4.389085,
+        "242000:F1|6h": 4.460983,
+        "242000:F1|24h": 3.700064,
+        "242000:P3|2h": 3.669595,
+        "242000:P3|6h": 3.70115,
+        "242000:P3|24h": 3.686639,
+        "242000:W4|2h": 3.282685,
+        "242000:W4|6h": 3.313396,
+        "242000:W4|24h": 2.675737,
+        "242000:F9|2h": 241.246,
+        "242000:F9|6h": 238.373324,
+        "242000:F9|24h": 235.93774,
+        "242000:T16|2h": 37.364463,
+        "242000:T16|6h": 37.802335,
+        "242000:T16|24h": 37.705552,
+        "242000:F17|2h": 285.873248,
+        "242000:F17|6h": 282.586578,
+        "242000:F17|24h": 279.191663,
+        "242000:T6|2h": 363.655922,
+        "242000:T6|6h": 365.165925,
+        "242000:T6|24h": 366.907294,
+        "242000:Q21|2h": 7.913909,
+        "242000:Q21|6h": 7.726386,
+        "242000:Q21|24h": 8.1823,
+        "242000:F2/242000:F26|2h": 314.383255,
+        "242000:F2/242000:F26|6h": 317.128207,
+        "242000:F2/242000:F26|24h": 322.756528,
+        "pak:sulfur|2h": 7.914717,
+        "pak:sulfur|6h": 7.762927,
+        "pak:sulfur|24h": 8.149749,
+        "lab_ewma": 8.774655,
+        "lab_last": 12.4,
+        "lab_age_h": 6.0,
+        "lab_above_last": 1.0,
+        "lab_above_share7": 0.571429,
+        "lab_hours_since_above": 6.0
+      },
       "data_flags": {
+        "scaffold_mode": false,
+        "source": "scripts.run_real bridge over data/cache",
+        "telemetry_at": "2026-07-18T16:00:00",
+        "complete": true,
+        "missing_tags": [],
         "running": true,
-        "pak_sulfur": { "healthy": true, "frozen": false, "value": 11.2, "age_minutes": 10 },
+        "running_detail": null,
+        "lab_sulfur_ewma": 8.7747,
+        "pak_sulfur": {
+          "value": 8.799779891967773,
+          "unit": "ppm",
+          "measured_at": "2026-07-18T16:00:00",
+          "age_minutes": 0.0,
+          "frozen": false,
+          "healthy": true
+        },
+        "feature_windows": {
+          "242000:T5|2h": 369.773674,
+          "242000:T5|6h": 371.224717,
+          "242000:T5|24h": 373.509879,
+          "242000:F26|2h": 283.765444,
+          "242000:F26|6h": 280.408991,
+          "242000:F26|24h": 277.598663,
+          "242000:F2|2h": 89210.154297,
+          "242000:F2|6h": 88907.319444,
+          "242000:F2|24h": 89574.756348,
+          "242000:P13|2h": 3.970257,
+          "242000:P13|6h": 3.999201,
+          "242000:P13|24h": 3.981304,
+          "242000:F1|2h": 4.389085,
+          "242000:F1|6h": 4.460983,
+          "242000:F1|24h": 3.700064,
+          "242000:P3|2h": 3.669595,
+          "242000:P3|6h": 3.70115,
+          "242000:P3|24h": 3.686639,
+          "242000:W4|2h": 3.282685,
+          "242000:W4|6h": 3.313396,
+          "242000:W4|24h": 2.675737,
+          "242000:F9|2h": 241.246,
+          "242000:F9|6h": 238.373324,
+          "242000:F9|24h": 235.93774,
+          "242000:T16|2h": 37.364463,
+          "242000:T16|6h": 37.802335,
+          "242000:T16|24h": 37.705552,
+          "242000:F17|2h": 285.873248,
+          "242000:F17|6h": 282.586578,
+          "242000:F17|24h": 279.191663,
+          "242000:T6|2h": 363.655922,
+          "242000:T6|6h": 365.165925,
+          "242000:T6|24h": 366.907294,
+          "242000:Q21|2h": 7.913909,
+          "242000:Q21|6h": 7.726386,
+          "242000:Q21|24h": 8.1823,
+          "242000:F2/242000:F26|2h": 314.383255,
+          "242000:F2/242000:F26|6h": 317.128207,
+          "242000:F2/242000:F26|24h": 322.756528,
+          "pak:sulfur|2h": 7.914717,
+          "pak:sulfur|6h": 7.762927,
+          "pak:sulfur|24h": 8.149749,
+          "lab_ewma": 8.774655,
+          "lab_last": 12.4,
+          "lab_age_h": 6.0,
+          "lab_above_last": 1.0,
+          "lab_above_share7": 0.571429,
+          "lab_hours_since_above": 6.0
+        },
+        "feed_sulfur_pct": 0.8988,
         "catalyst": {
-          "state": "ageing",
-          "days_to_eor": 95,
-          "excess_now_c": 10.2,
-          "eor_excess_c": 13.56
+          "eor_excess_c": 13.56,
+          "state": "start_up",
+          "restart": "2026-06-30T14:30:00"
+        },
+        "scenario": null
+      },
+      "notes": [
+        "Мост scripts/run_real.py: заглушки удалены, теги с префиксом установки, ЛИМС доступен через 4 ч после отбора."
+      ]
+    },
+    "baseline_quality": {
+      "metrics": {
+        "sulfur_mg_kg": 8.7747
+      },
+      "risk_of_spec_breach": 0.1094,
+      "confidence": 0.7385,
+      "horizon_minutes": 180,
+      "features_used": [
+        "lims:sulfur_mg_kg",
+        "model:breach_classifier"
+      ],
+      "assumptions": [
+        "Базовая модель: экспоненциальное сглаживание результатов ЛИМС, доступных на момент решения (задержка 4 ч).",
+        "Интервал p05–p95 — квантили ошибки этого прогноза на обучающем периоде; расширяется с возрастом последнего анализа.",
+        "Влияние рычагов мультипликативное: знаки по физике процесса, величины — допущения.",
+        "Сера оценивается в гидроочищенном ДТ, а не в товарном.",
+        "Вероятность нарушения: классификатор при исправном анализаторе, иначе оценка по интервалу. Эффект действия в обоих случаях даёт физический слой, не модель."
+      ],
+      "intervals": {
+        "sulfur_mg_kg": {
+          "mean": 8.7747,
+          "p05": 5.3026,
+          "p95": 11.8697
+        }
+      },
+      "details": {
+        "model": "ewma_v0",
+        "intervals": {
+          "sulfur_mg_kg": {
+            "mean": 8.7747,
+            "p05": 5.3026,
+            "p95": 11.8697
+          }
+        },
+        "lab_value": 12.399999618530273,
+        "ewma": 8.7747,
+        "alpha": 0.1,
+        "lab_age_hours": 6.0,
+        "level": 8.7747,
+        "feed_factor": 1.0,
+        "feed_sulfur_pct": 0.8988,
+        "feed_sulfur_pct_scenario": null,
+        "what_if_shift": 0.0,
+        "deltas": {},
+        "risk_source": "classifier",
+        "risk_interval": 0.3062,
+        "risk_interval_hold": 0.3062,
+        "risk_classifier_hold": 0.1094,
+        "risk_horizon_minutes": 120,
+        "interval_horizon_minutes": 1440,
+        "classifier_terms": [
+          {
+            "feature": "242000:F17|2h",
+            "value": 285.8732,
+            "contribution": 0.584
+          },
+          {
+            "feature": "pak:sulfur|2h",
+            "value": 7.9147,
+            "contribution": -0.3987
+          },
+          {
+            "feature": "lab_hours_since_above",
+            "value": 6.0,
+            "contribution": 0.3432
+          }
+        ],
+        "classifier_unavailable": null,
+        "classifier_auc_heldout": 0.724,
+        "caveats": [
+          "Последний результат ЛИМС 12.4 мг/кг, 6 ч назад.",
+          "Вероятность нарушения 11% — классификатор по поточному анализатору и телеметрии; это оценка на сейчас, не прогноз."
+        ]
+      }
+    },
+    "baseline_reliability": {
+      "risk_index": 0.1682,
+      "risk_class": "low",
+      "risk_factors": [
+        "242000:F26 на 11 % выше типичного расхода сырья."
+      ],
+      "is_mode_allowed": true,
+      "soft_constraints": [
+        "не повышать 242000:F26"
+      ],
+      "assumptions": [
+        "Тяжесть режима — прокси: в пакете нет данных об отказах, возрасте катализатора и температурах по слоям.",
+        "Прокси дезактивации: насколько 242000:T5 выше медианы обучающего периода при том же 242000:F26.",
+        "Рабочий диапазон — p01–p99 обучающего периода на рабочих строках; модельная граница, не заводской лимит. Текущий режим допустим с запасом в один шаг рычага за границей; сдвинутый рычаг обязан оказаться внутри диапазона.",
+        "Веса компонентов (0.5 / 0.3 / 0.2) и пороги классов выбраны, а не обучены."
+      ],
+      "details": {
+        "components": {
+          "temperature": 0.0,
+          "throughput": 0.5608,
+          "step": 0.0
+        },
+        "t5_z": -0.213,
+        "feed_to_typical": 1.1122,
+        "max_steps": 0.0,
+        "running": true,
+        "catalyst": {
+          "eor_excess_c": 13.56,
+          "state": "start_up",
+          "restart": "2026-06-30T14:30:00"
         }
       }
+    },
+    "sulfur_budget": {
+      "budget_mg_kg": 12.143,
+      "shares": {
+        "hydrotreated_diesel": 0.7,
+        "kerosene": 0.3,
+        "gas_oil": 0.0
+      },
+      "margin_mg_kg": 0.0,
+      "max_dilution_share": 0.3,
+      "reason": null,
+      "limit_in_force_mg_kg": 12.143
+    },
+    "n_candidates": 9,
+    "n_feasible": 7,
+    "trigger_kinds": [
+      "lab_off_spec"
+    ],
+    "quality_trigger_filter": {
+      "applied": true,
+      "dropped": 2,
+      "hold_sulfur_mg_kg": 8.7747
+    },
+    "blend": {
+      "outcome": "blend",
+      "diesel_sulfur_mg_kg": 8.081,
+      "best": {
+        "shares": {
+          "hydrotreated_diesel": 1.0,
+          "kerosene": 0.0,
+          "gas_oil": 0.0
+        },
+        "tonnes": {
+          "hydrotreated_diesel": 1000.0,
+          "kerosene": 0.0,
+          "gas_oil": 0.0
+        },
+        "additive": null,
+        "additive_kg_t": 0.0,
+        "properties": {
+          "sulfur_mg_kg": 8.081,
+          "density_kg_m3": 836.1,
+          "t95_c": 347.0,
+          "cetane": 53.75
+        },
+        "margins": {
+          "sulfur_mg_kg": 1.919,
+          "density_kg_m3": 8.9,
+          "t95_c": 13.0,
+          "cetane": 2.75
+        },
+        "cost_rel_per_t": 1.0,
+        "feasible": true,
+        "violations": []
+      },
+      "alternatives": [
+        {
+          "shares": {
+            "hydrotreated_diesel": 0.95,
+            "kerosene": 0.05,
+            "gas_oil": 0.0
+          },
+          "tonnes": {
+            "hydrotreated_diesel": 950.0,
+            "kerosene": 50.0,
+            "gas_oil": 0.0
+          },
+          "additive": null,
+          "additive_kg_t": 0.0,
+          "properties": {
+            "sulfur_mg_kg": 7.927,
+            "density_kg_m3": 835.355,
+            "t95_c": 344.102,
+            "cetane": 53.668
+          },
+          "margins": {
+            "sulfur_mg_kg": 2.073,
+            "density_kg_m3": 9.645,
+            "t95_c": 15.898,
+            "cetane": 2.668
+          },
+          "cost_rel_per_t": 1.0,
+          "feasible": true,
+          "violations": []
+        },
+        {
+          "shares": {
+            "hydrotreated_diesel": 0.95,
+            "kerosene": 0.0,
+            "gas_oil": 0.05
+          },
+          "tonnes": {
+            "hydrotreated_diesel": 950.0,
+            "kerosene": 0.0,
+            "gas_oil": 50.0
+          },
+          "additive": null,
+          "additive_kg_t": 0.0,
+          "properties": {
+            "sulfur_mg_kg": 8.077,
+            "density_kg_m3": 837.758,
+            "t95_c": 347.096,
+            "cetane": 53.498
+          },
+          "margins": {
+            "sulfur_mg_kg": 1.923,
+            "density_kg_m3": 7.242,
+            "t95_c": 12.904,
+            "cetane": 2.498
+          },
+          "cost_rel_per_t": 1.0,
+          "feasible": true,
+          "violations": []
+        }
+      ],
+      "closest_infeasible": null,
+      "binding": [],
+      "refuse_reason": null,
+      "n_candidates": 63,
+      "n_feasible": 51,
+      "spec": {
+        "season": "summer",
+        "sulfur_mg_kg_max": 10.0,
+        "t95_c_max": 360.0,
+        "cetane_min": 51.0,
+        "density_min": 820.0,
+        "density_max": 845.0
+      },
+      "assumptions": [
+        "Смешение: сера — линейно по массе, плотность — по объёму (точно); T95 и цетановое число — линейно по объёму (допущение: на НПЗ смешивают по индексам).",
+        "Гидроочищенный компонент идёт в смесь со средним прогнозом серы режима: резервуар усредняет многие часы производства.",
+        "Цены компонентов равны: ценовых данных в пакете нет. Экономику задаёт присадка — в 100 раз дороже тонны ДТ.",
+        "Отклик присадки насыщается: +G·(1 − exp(−доза/d0)). Величины G и d0 — допущения."
+      ]
+    },
+    "decision": {
+      "outcome": "recommend",
+      "why": "лучший из 5 допустимых вариантов улучшает оценку на 6.2 (порог 5)",
+      "triggers": [
+        "последний анализ ЛИМС вне спецификации: 12.4 > 10 мг/кг"
+      ],
+      "hold_margin": 5.0,
+      "breach_risk_source": "classifier",
+      "breach_risk_threshold": 0.2512,
+      "improvement_over_hold": 6.2333,
+      "best_candidate": "delta:242000:T5+2"
     }
   }
 }
