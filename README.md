@@ -9,6 +9,7 @@
 
 ```bash
 git clone https://github.com/KirillRasshivalov/Neftecode.git
+cd Neftecode
 pip install -r requirements.txt
 pip install -e .
 ```

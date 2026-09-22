@@ -1,6 +1,6 @@
 """Build the parquet cache in `data/cache/` from the organisers' raw package in `data/raw/`.
 
-Everything downstream reads the cache, never the raw files (CLAUDE.md §2 rule 9, §11).
+Everything downstream reads the cache, never the raw files: they are parsed once, here.
 The cache is a **raw parse**: sentinels are not stripped and nothing is cleaned —
 `scripts/realdata.py` does that, in one place. The parsers are the ones the Phase 1
 data audit used, so a rebuilt cache reproduces every number in this repository.

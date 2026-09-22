@@ -37,9 +37,10 @@ def tag_id(tag: str, unit: str = UNIT) -> str:
 #:   diesel density, and the two correlate at 0.9999 — one stream, two units.
 #: - `F15` is dropped. The reference calls it the volumetric feed, but 3 400 m³/h against
 #:   a mass feed of 220 t/h implies a density of 0.065, so it is not that; and the quench
-#:   is `F14`, not `F15`. It stays unresolved and may not be a lever (CLAUDE.md §6.1).
+#:   is `F14`, not `F15`. It stays unresolved, and a tag whose meaning the reference does
+#:   not settle is never a lever.
 #: `P13` replaces it: the organisers named reactor inlet pressure as a control variable,
-#: and CLAUDE.md §11 requires higher hydrogen partial pressure to reduce sulfur.
+#: and by the physics a higher hydrogen partial pressure reduces sulfur.
 LEVERS: dict[str, dict[str, object]] = {
     "T5": {"step": 2.0, "unit": "°C", "label": "Полисеп. Р-201. Температура ГСС на выходе"},
     "F26": {"step": 5.0, "unit": "м³/ч", "label": "Расход гидроочищенного ДТ в цех №8, объёмный"},
@@ -47,7 +48,7 @@ LEVERS: dict[str, dict[str, object]] = {
     "P13": {"step": 0.05, "unit": "МПа", "label": "Полисеп. Р-202. Давление на входе"},
 }
 
-#: Chronological split, frozen (CLAUDE.md §6.2).
+#: Chronological split, frozen before any training. No shuffling anywhere.
 SPLIT_AT = pd.Timestamp("2025-09-12 14:30")
 
 #: Exact placeholder values on 24-2000 telemetry (audit §2.5).
@@ -76,7 +77,7 @@ SPEC_LIMIT_MG_KG = 10.0
 #: Lab results above this are screened as possible outliers, not silently dropped.
 OUTLIER_ABOVE_MG_KG = 50.0
 
-#: Demo weeks, all in the held-out region (CLAUDE.md §6.2).
+#: Demo weeks, all in the held-out region.
 #:
 #: `degraded` moved on 19.09.2026. The week first chosen for it turned out to be a
 #: shutdown, and a stopped unit is the least interesting refusal there is. From
@@ -105,7 +106,8 @@ def cache_path(name: str) -> Path:
     path = CACHE_DIR / f"{name}.parquet"
     if not path.exists():
         raise FileNotFoundError(
-            f"{path} is missing. Put the parquet cache from the data audit into data/cache/."
+            f"{path} is missing. Build the cache first: python -m scripts.build_cache "
+            "(it needs the organisers' raw files in data/raw/)."
         )
     return path
 

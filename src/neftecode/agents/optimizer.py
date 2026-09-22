@@ -25,8 +25,8 @@ class OptimizerAgent:
 
     Each candidate is assessed by the quality and reliability agents and checked
     against the hard constraints. Infeasible candidates never get a score and are
-    ranked after the feasible ones, so no weight can trade a violation away
-    (CLAUDE.md §2 rule 4).
+    ranked after the feasible ones, so no weight can trade a violation away: the hard
+    constraints are a filter, not a term in the score.
 
     Candidates move at most `max_levers_per_action` levers (one by default): an
     operator can carry out and verify one change at a time, and a card that moves four

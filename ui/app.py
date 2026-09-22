@@ -8,9 +8,7 @@ import streamlit as st
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from neftecode.demo.scenarios import DEMO_SCENARIOS
 from neftecode.domain.recommendation import OperatorRecommendation
-from neftecode.orchestration.orchestrator import Orchestrator
 
 SHOWCASE_DIR = Path(__file__).resolve().parent / "showcase"
 ASSETS = Path(__file__).resolve().parent / "assets"
@@ -75,18 +73,6 @@ def fmt_num(value: Any, digits: int = 2) -> str:
 def load_showcase(name: str) -> dict[str, Any]:
     path = SHOWCASE_DIR / f"{name}.json"
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def run_live(scenario: str) -> OperatorRecommendation:
-    sc = DEMO_SCENARIOS[scenario]
-    return Orchestrator().run_cycle(sc.timestamp, scenario=scenario)
-
-
-def try_real_available() -> bool:
-    cache = ROOT / "data" / "cache"
-    models = ROOT / "models"
-    needed = ["quality_baseline.json", "reliability_reference.json"]
-    return cache.exists() and any(cache.glob("*.parquet")) and all((models / n).exists() for n in needed)
 
 
 def hero() -> None:
@@ -373,43 +359,20 @@ def main() -> None:
     hero()
 
     with st.sidebar:
-        st.markdown("### Режим показа")
-        mode = st.radio(
-            "Источник",
-            [
-                "Продающее демо (готовые карточки)",
-                "Живой цикл (каркас)",
-            ],
-            index=0,
+        st.markdown("### Демо-недели: трассы на данных организаторов")
+        week = st.selectbox(
+            "Демо-неделя",
+            list(WEEK_META),
+            format_func=lambda k: f"{WEEK_META[k]['title']} · {k}",
         )
-        st.markdown("---")
-        if mode.startswith("Продающее"):
-            week = st.selectbox(
-                "Демо-неделя",
-                list(WEEK_META),
-                format_func=lambda k: f"{WEEK_META[k]['title']} · {k}",
-            )
-            st.caption(WEEK_META[week]["blurb"])
-            run = st.button("Показать карточку", type="primary", use_container_width=True)
-        else:
-            scenario = st.selectbox(
-                "Сценарий каркаса",
-                list(DEMO_SCENARIOS),
-                format_func=lambda k: f"{k} — {DEMO_SCENARIOS[k].description[:48]}…",
-            )
-            run = st.button("Запустить цикл", type="primary", use_container_width=True)
-            week = None
+        st.caption(WEEK_META[week]["blurb"])
+        run = st.button("Показать карточку", type="primary", use_container_width=True)
 
         st.markdown("---")
-        real_ok = try_real_available()
-        st.markdown("#### Реальные данные")
-        if real_ok:
-            st.success("Кэш и модели найдены — можно подключить `scripts.run_real`.")
-        else:
-            st.info(
-                "Сейчас нет `data/cache/*.parquet` и/или JSON в `models/`. "
-                "UI работает на showcase и живом каркасе — этого достаточно для продажи архитектуры."
-            )
+        st.caption(
+            "Карточки — сохранённые JSON-трассы `scripts.run_real` на данных организаторов. "
+            "Как пересобрать — в `ui/README.md`."
+        )
         st.markdown(
             '<div class="nc-side-foot">Приоритет: качество → безопасность → объяснимость → экономика</div>',
             unsafe_allow_html=True,
@@ -420,13 +383,8 @@ def main() -> None:
         st.session_state.title = WEEK_META["stable"]["title"]
 
     if run:
-        if mode.startswith("Продающее"):
-            st.session_state.rec = load_showcase(week)
-            st.session_state.title = WEEK_META[week]["title"]
-        else:
-            live = run_live(scenario)
-            st.session_state.rec = live.model_dump(mode="json")
-            st.session_state.title = f"Живой цикл · {scenario}"
+        st.session_state.rec = load_showcase(week)
+        st.session_state.title = WEEK_META[week]["title"]
 
     render_card(st.session_state.rec, title=st.session_state.title)
 

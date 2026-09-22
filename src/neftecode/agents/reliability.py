@@ -33,20 +33,8 @@ class ReliabilityAgentStub:
         )
 
 
-class ReliabilityAgentML:
-    def __init__(self, model_path: str | None = None) -> None:
-        self.model_path = model_path
-
-    def assess(
-        self,
-        state: ProcessState,
-        action: ControlAction | None = None,
-    ) -> ReliabilityAssessment:
-        raise NotImplementedError("ML-2: implement reliability/severity model here")
-
-
 class ReliabilityAgentBaseline:
-    """Operating-severity proxy on reference-resolved levers only (CLAUDE.md §8.3).
+    """Operating-severity proxy, built on reference-resolved levers only.
 
     The package has no labelled failures, no catalyst age and no bed temperatures, so
     severity is a transparent proxy with three parts:
@@ -58,8 +46,8 @@ class ReliabilityAgentBaseline:
     - step: how large the proposed change is.
 
     Reference statistics come from `scripts/analysis/reliability_reference.py`
-    (training period only) and are passed in: the agent reads no files
-    (CLAUDE.md §2 rule 10). Weights and thresholds are assumptions.
+    (training period only) and are passed in: the agent reads no files. Weights and
+    thresholds are assumptions.
     """
 
     W_TEMPERATURE = 0.5

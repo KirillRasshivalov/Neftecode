@@ -2,11 +2,12 @@
 
 - operating envelope (p01 / p50 / p99) of each frozen lever on clean operating rows;
 - median `242000:T5` per band of `242000:F26`, the basis of the "running hotter than
-  usual for this feed rate" deactivation proxy (CLAUDE.md §8.3);
+  usual for this feed rate" deactivation proxy;
 - typical feed rate and the lever step sizes.
 
-The envelope is a conservative model range, not an equipment limit (CLAUDE.md §2
-rule 3). Writes `models/reliability_reference.json`.
+The envelope is a conservative model range, not an equipment limit: the package states
+no operating range, so a historical percentile band stands in for one and is recorded
+as an assumption. Writes `models/reliability_reference.json`.
 
     python -m scripts.analysis.reliability_reference
 """

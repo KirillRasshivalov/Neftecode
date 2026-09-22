@@ -37,19 +37,6 @@ class QualityAgentStub:
         )
 
 
-class QualityAgentML:
-    def __init__(self, model_path: str | None = None) -> None:
-        self.model_path = model_path
-        self._model = None
-
-    def assess(
-        self,
-        state: ProcessState,
-        action: ControlAction | None = None,
-    ) -> QualityAssessment:
-        raise NotImplementedError("ML-1: implement model load + feature mapping here")
-
-
 class BreachClassifier:
     """P(lab sulfur above spec) for the regime as measured, from fitted coefficients.
 
@@ -59,7 +46,7 @@ class BreachClassifier:
     product over standardised features, so the decision path needs no scikit-learn and
     the same state gives the same number to the last digit on every run.
 
-    The agent reads no files (CLAUDE.md rule 10): the caller loads
+    The agent reads no files: the caller loads
     `models/breach_classifier.json` and passes its `linear_model` block here.
     """
 
@@ -113,8 +100,8 @@ class QualityAgentBaseline:
     result. The interval is the training residual spread of that predictor, so the
     p95 is real even without a trained model. The as-of EWMA is computed by the state
     builder and arrives in `data_flags["lab_sulfur_ewma"]`; parameters are fitted by
-    `scripts/analysis/quality_baseline_fit.py` and passed in. The agent reads no files
-    (CLAUDE.md §2 rule 10).
+    `scripts/analysis/quality_baseline_fit.py` and passed in. The agent reads no files:
+    every agent here is a pure function of the state and the parameters given to it.
 
     The what-if layer moves the prediction when a lever changes. It is multiplicative:
     product sulfur = level × exp(Σ sensitivity × Δlever / reference level). At the
