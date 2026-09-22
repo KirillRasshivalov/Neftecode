@@ -131,6 +131,23 @@ class Orchestrator:
             "baseline_reliability": baseline_r.model_dump(mode="json"),
         }
 
+        # A lever the export does not contain at all. Checked first: without the feed
+        # or the reactor temperature the cycle cannot even tell whether the unit runs.
+        # A missing context tag is not here on purpose — the classifier drops out and
+        # the interval estimate carries on, which is degradation, not a reason to refuse.
+        absent = self._absent_levers(state)
+        if absent:
+            msg = self._message(
+                "absent_tags",
+                "Надёжной рекомендации нет: не хватает управляемых параметров — без них режим не оценить.",
+            )
+            detail = f"в выгрузке телеметрии нет {', '.join(absent)}"
+            audit["decision"] = {"outcome": REFUSE, "why": detail, "triggers": []}
+            return self._refuse(
+                timestamp, state, f"{msg} Детали: {detail}.",
+                problem=detail, confidence=0.0, audit=audit,
+            )
+
         if state.data_flags.get("running") is False:
             msg = self._message(
                 "unit_not_running",
@@ -333,6 +350,14 @@ class Orchestrator:
                 "текущий режим не проходит ограничения: " + "; ".join(self._rejection_detail(hold)[:2]),
             ))
         return triggers
+
+    def _absent_levers(self, state: ProcessState) -> list[str]:
+        """Levers the state builder reports as absent from the export, in whitelist order."""
+        absent = set(state.data_flags.get("absent_tags") or [])
+        if not absent:
+            return []
+        levers = [item["tag"] for item in self.whitelist.get("controllable_parameters", [])]
+        return [tag for tag in levers if tag in absent]
 
     @staticmethod
     def _not_harder_on_equipment(

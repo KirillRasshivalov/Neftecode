@@ -133,7 +133,13 @@ class RealStateBuilder:
         # not really have. They are marked as such in `data_flags` so no card can pass a
         # scenario off as a measurement.
         self.overrides = dict(overrides or {})
-        self.tele = rd.load_telemetry()
+        # Tags the export does not contain at all. The loader gives them as all-NaN
+        # columns instead of failing, so every decision reports them and the orchestrator
+        # refuses with the tag named when a lever is among them. A missing context tag is
+        # survivable: the classifier drops out and the interval estimate takes over.
+        wanted = tuple(rd.LEVERS) + (rd.CONTEXT_TAGS if classifier_features else ())
+        self.absent = rd.absent_tags(wanted)
+        self.tele = rd.load_telemetry(allow_absent=True)
         self.labels = pd.read_parquet(rd.MODELS_DIR / "labels.parquet").sort_values("sampled_at", kind="stable")
         self.labels = self.labels.reset_index(drop=True)
         self.pak = rd.load_pak_sulfur()
@@ -172,7 +178,7 @@ class RealStateBuilder:
         self.windows = None
         if classifier_features:
             wanted = set(classifier_features)
-            frame = rd.window_means(rd.load_feature_frame())
+            frame = rd.window_means(rd.load_feature_frame(allow_absent=True))
             self.windows = frame[[c for c in frame.columns if c in wanted]]
 
     def _feed_sulfur(self, t: pd.Timestamp) -> float:
@@ -264,6 +270,7 @@ class RealStateBuilder:
                     self.catalyst["daily"], self.catalyst["changes"], t,
                     self.catalyst["eor"], self.catalyst["long_stops"],
                 ),
+                **({"absent_tags": list(self.absent)} if self.absent else {}),
                 **self.overrides,
                 "scenario": scenario,
             },
