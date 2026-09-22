@@ -88,7 +88,8 @@ RECALL_TARGET = 0.5
 MIN_AUC = 0.60
 
 #: Physically required direction of each feature's effect on P(sulfur > 10).
-#: Imposed on the boosting model (CLAUDE.md rule 11: a wrong sign is not shipped).
+#: Imposed on the boosting model: a coefficient whose sign contradicts the physics means
+#: the model learned the operator's policy, not the process, and it is not shipped.
 MONOTONE = {
     rd.tag_id("T5"): -1,     # deeper hydrotreating removes sulfur
     rd.tag_id("T6"): -1,     # same, at the second reactor's inlet

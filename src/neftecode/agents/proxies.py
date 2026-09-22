@@ -30,8 +30,8 @@ pushing feed up: the hard sulfur filter, and the orchestrator's rule that a qual
 trigger may not be answered by a step that raises sulfur.
 
 Parameters come from `models/economics_reference.json`, fitted by
-`scripts/analysis/economics_reference.py`. This module reads no files and holds no state
-(CLAUDE.md §2 rule 10).
+`scripts/analysis/economics_reference.py`. This module reads no files and holds no state: like every agent here it is a pure
+function of what it is handed.
 """
 from __future__ import annotations
 

@@ -1,10 +1,10 @@
-"""Predictability check (CLAUDE.md §12.2): does 24-2000 telemetry carry signal about lab sulfur?
+"""Predictability check: does 24-2000 telemetry carry signal about lab sulfur?
 
 Trains the simplest honest model, ridge regression on lagged window means, on the
 training period and evaluates it on the held-out period against the training median
 and the EWMA baseline the quality agent uses today. A lag sweep estimates the dead
 time. A gradient-boosting fit at the selected setting checks that a flat result is
-not just a linearity artefact. Lever signs are checked per CLAUDE.md §11, feed first.
+not just a linearity artefact. Lever signs are checked against the physics, feed first.
 
 Leakage rules:
 - features for a lab result sampled at t use telemetry at or before t only;

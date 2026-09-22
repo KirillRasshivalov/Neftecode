@@ -1,7 +1,7 @@
 """The as-of guarantee: at a moment `t` the state contains only what existed at `t`.
 
-This is the one place in the project where information from the future can get in
-(CLAUDE.md §2 rule 9), so it is the one place that gets a test of its own. The strongest
+The data layer is the only module that reads the series, so it is the one place where
+information from the future can get in — and the one place that gets a test of its own. The strongest
 check here is `test_truncating_the_future_changes_nothing`: the state built over the whole
 cache must equal the state built over a cache that physically ends at `t`. If anything
 read forward, the two would differ.

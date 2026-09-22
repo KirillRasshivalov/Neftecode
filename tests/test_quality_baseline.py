@@ -63,7 +63,7 @@ def test_interval_brackets_the_mean():
 
 
 # Physics sanity checks. Feed rate first: it is set by the production plan, not in
-# response to quality, so its sign is the least confounded (CLAUDE.md §11).
+# response to quality, so its sign is the least confounded.
 def test_more_feed_raises_predicted_sulfur():
     assert sulfur(AGENT.assess(make_state(), move("242000:F26", 5.0))) > sulfur(AGENT.assess(make_state()))
 

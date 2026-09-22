@@ -1,9 +1,9 @@
-"""Run the decision cycle on real data: a bridge until the real ProcessStateBuilder lands.
+"""Run the decision cycle on real data.
 
 Builds a `ProcessState` from `data/cache` (sentinels stripped, unit-prefixed tags,
 LIMS usable 4 h after sampling, ПАК with a health flag) and runs the orchestrator
-with the baseline agents. Kirill's `src/neftecode/data/` is not touched; this file
-shows what his builder needs to produce.
+with the baseline agents. This is the data path the demo and the notebook use; a
+production deployment replaces this builder and nothing else.
 
 Once, to build the model files:
 

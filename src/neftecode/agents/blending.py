@@ -6,8 +6,8 @@ held to sulfur ≤ 10 mg/kg, T95 ≤ 360 °C, cetane ≥ 51 (49 in winter) and d
 820-845 kg/m³ (800-845 in winter).
 
 Same pattern as the lever optimizer: generate every blend on a grid, drop the ones that
-break a limit, rank what is left. A limit is never traded against cost (CLAUDE.md §2
-rule 4). With no feasible blend the agent refuses and names the limit that cannot be
+break a limit, rank what is left. A limit is never traded against cost: the hard
+constraints are a filter, not a term in the score. With no feasible blend the agent refuses and names the limit that cannot be
 met, and by how much.
 
 Mixing, by mass share w:
@@ -21,7 +21,7 @@ The tank averages many hours of production, so the hydrotreated component enters
 with the regime's **predicted mean** sulfur, not the p95 of a single lab sample. The
 p95 stays where it belongs, on the hard check of the hydrotreating regime.
 
-The agent is a pure function (CLAUDE.md §2 rule 10): components, specification and
+The agent is a pure function: components, specification and
 additives arrive through the constructor, the diesel sulfur of the regime as an
 argument. It reads no files.
 """
