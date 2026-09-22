@@ -110,6 +110,15 @@ def cache_path(name: str) -> Path:
     return path
 
 
+def cache_columns(name: str) -> list[str]:
+    """Column names of a cached table, read from the parquet footer only."""
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as exc:  # pragma: no cover - environment problem
+        raise ImportError("Reading the parquet cache needs pyarrow: pip install pyarrow") from exc
+    return list(pq.read_schema(cache_path(name)).names)
+
+
 def read_cache(name: str, columns: list[str] | None = None) -> pd.DataFrame:
     try:
         return pd.read_parquet(cache_path(name), columns=columns)
@@ -120,11 +129,35 @@ def read_cache(name: str, columns: list[str] | None = None) -> pd.DataFrame:
 # --------------------------------------------------------------- telemetry
 
 
-def load_telemetry(tags: tuple[str, ...] = tuple(LEVERS)) -> pd.DataFrame:
-    """24-2000 telemetry with sentinels as NaN, indexed by `date`, prefixed columns."""
-    df = read_cache("tags_242000", columns=["date", *tags])
+def absent_tags(tags: tuple[str, ...]) -> list[str]:
+    """The requested tags the telemetry export does not contain at all, prefixed."""
+    present = set(cache_columns("tags_242000"))
+    return [tag_id(t) for t in tags if t not in present]
+
+
+def load_telemetry(tags: tuple[str, ...] = tuple(LEVERS), allow_absent: bool = False) -> pd.DataFrame:
+    """24-2000 telemetry with sentinels as NaN, indexed by `date`, prefixed columns.
+
+    A tag the export does not contain is an error by default, naming the tag: training on
+    an incomplete export must stop, not write NaN into a model. The decision path passes
+    `allow_absent=True` instead and gets an all-NaN column, so the state reports the tag
+    as missing and the cycle refuses with it named — which is what the task statement
+    asks for when data is insufficient.
+    """
+    missing = absent_tags(tags)
+    if missing and not allow_absent:
+        raise KeyError(
+            f"в выгрузке телеметрии нет тегов: {', '.join(missing)} "
+            "(ожидаются по scripts/realdata.py)"
+        )
+    present = [t for t in tags if tag_id(t) not in missing]
+    df = read_cache("tags_242000", columns=["date", *present])
     df = df.set_index("date").sort_index()
     df = df.mask(df.isin(SENTINELS_242000))
+    for t in tags:
+        if t not in df.columns:
+            df[t] = np.nan
+    df = df[list(tags)]
     df.columns = [tag_id(c) for c in df.columns]
     return df
 
@@ -278,9 +311,9 @@ LAB_HISTORY_WINDOW = 7
 HOURS_SINCE_ABOVE_CAP = 720.0
 
 
-def load_feature_frame() -> pd.DataFrame:
+def load_feature_frame(allow_absent: bool = False) -> pd.DataFrame:
     """Levers, reference-resolved context tags, the gas-to-feed ratio and ПАК sulfur."""
-    frame = load_telemetry(tuple(LEVERS) + CONTEXT_TAGS)
+    frame = load_telemetry(tuple(LEVERS) + CONTEXT_TAGS, allow_absent=allow_absent)
     feed = frame[tag_id("F26")]
     frame[RATIO_ID] = (frame[tag_id("F2")] / feed).where(feed > RUNNING_MIN["F26"])
     frame[PAK_FEATURE] = load_pak_sulfur().reindex(frame.index)

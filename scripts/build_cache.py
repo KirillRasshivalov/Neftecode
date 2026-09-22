@@ -135,6 +135,7 @@ def build(raw_dir: Path = RAW_DIR, cache_dir: Path = rd.CACHE_DIR, force: bool =
 
 
 def main(argv: list[str] | None = None) -> None:
+    rd.use_utf8_stdout()
     parser = argparse.ArgumentParser(prog="build_cache", description=__doc__.splitlines()[0])
     parser.add_argument("--force", action="store_true", help="rebuild files that already exist")
     args = parser.parse_args(argv)
